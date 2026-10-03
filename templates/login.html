@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Sign in - TripDesk{% endblock %}
+{% block body %}
+<div class="login-wrap">
+  <div class="login-photo">
+    <img src="{{ url_for('static', filename='img/login-1.jpg') }}" alt="Airplane window at sunset">
+  </div>
+  <div class="login-panel">
+    <div class="login-card">
+      <img class="brand-mark" src="{{ url_for('static', filename='img/logo-mark.svg') }}" alt="TripDesk logo" width="48" height="48">
+      <h1>TripDesk</h1>
+      <p class="muted">Staff sign in</p>
+      {% if error %}<div class="alert" role="alert">{{ error }}</div>{% endif %}
+      <form method="post" action="{{ url_for('login') }}">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="username" required value="{{ request.form.get('email', '') }}">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button type="submit" class="btn-primary">Sign in</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Not allowed - TripDesk{% endblock %}
+{% block body %}
+<div class="denied">
+  <h1>Not allowed</h1>
+  <p>Your role cannot open this page.</p>
+  <a class="btn-primary" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+</div>
+{% endblock %}

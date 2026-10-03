@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - TripDesk{% endblock %}
+{% block body %}
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <img src="{{ url_for('static', filename='img/logo-mark.svg') }}" alt="TripDesk logo" width="32" height="32">
+      <span>TripDesk</span>
+    </div>
+    <nav aria-label="Main">
+      <a href="{{ url_for('dashboard') }}" class="active">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 12l9-9 9 9M5 10v10h5v-6h4v6h5V10"/></svg>
+        Dashboard
+      </a>
+    </nav>
+    <div class="side-foot">
+      <div class="user-name">{{ user.name }}</div>
+      <div class="user-role">{{ user.role.replace('_', ' ').title() }}{% if user.branch_name %} · {{ user.branch_name }}{% endif %}</div>
+      <form method="post" action="{{ url_for('logout') }}"><button type="submit" class="btn-outline">Sign out</button></form>
+    </div>
+  </aside>
+  <main class="content">
+    <header class="page-head">
+      <div>
+        <h1>Dashboard</h1>
+        <p class="muted">{{ today }} · {{ user.branch_name if user.branch_name else 'All branches' }}</p>
+      </div>
+    </header>
+
+    <section class="cards" aria-label="Summary">
+      <div class="card stat">
+        <div class="stat-label">Departures today</div>
+        <div class="stat-value">{{ totals.departures }}</div>
+      </div>
+      <div class="card stat">
+        <div class="stat-label">Trips with unpaid balance</div>
+        <div class="stat-value">{{ totals.unpaid_count }}</div>
+      </div>
+      <div class="card stat">
+        <div class="stat-label">Outstanding total</div>
+        <div class="stat-value">${{ "{:,.2f}".format(totals.unpaid_total) }}</div>
+      </div>
+      <div class="card stat">
+        <div class="stat-label">Active trips</div>
+        <div class="stat-value">{{ totals.active_trips }}</div>
+      </div>
+    </section>
+
+    <section class="card" aria-label="Branch performance">
+      <h2>Branch performance</h2>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Branch</th><th scope="col">Active trips</th><th scope="col">Departing today</th><th scope="col">Collected this month</th><th scope="col">Outstanding</th></tr></thead>
+        <tbody>
+        {% for s in stats %}
+          <tr>
+            <td>{{ s.name }}</td>
+            <td>{{ s.active_trips }}</td>
+            <td>{{ s.departures_today }}</td>
+            <td>${{ "{:,.2f}".format(s.collected_month) }}</td>
+            <td>${{ "{:,.2f}".format(s.outstanding) }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5">No branches to show.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </section>
+
+    <div class="grid-2">
+      <section class="card" aria-label="Today's departures">
+        <h2>Today's departures</h2>
+        {% if departures %}
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Trip</th><th scope="col">Client</th><th scope="col">Branch</th><th scope="col">Status</th></tr></thead>
+          <tbody>
+          {% for t in departures %}
+            <tr>
+              <td>{{ t.title }}<br><span class="muted small">Returns {{ t.return_date }}</span></td>
+              <td>{{ t.client_name }}</td>
+              <td>{{ t.branch_name }}</td>
+              <td><span class="pill pill-{{ t.status }}">{{ t.status.title() }}</span></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        {% else %}
+        <p class="muted">No departures scheduled for today.</p>
+        {% endif %}
+      </section>
+
+      <section class="card" aria-label="Unpaid balances">
+        <h2>Unpaid balances</h2>
+        {% if unpaid %}
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Trip</th><th scope="col">Client</th><th scope="col">Departs</th><th scope="col">Balance</th></tr></thead>
+          <tbody>
+          {% for t in unpaid %}
+            <tr>
+              <td>{{ t.title }}<br><span class="muted small">${{ "{:,.2f}".format(t.total_price) }} total · ${{ "{:,.2f}".format(t.paid) }} paid</span></td>
+              <td>{{ t.client_name }}</td>
+              <td>{{ t.departure_date }}</td>
+              <td class="amount">${{ "{:,.2f}".format(t.balance) }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        {% else %}
+        <p class="muted">Every trip is fully paid.</p>
+        {% endif %}
+      </section>
+    </div>
+  </main>
+</div>
+{% endblock %}
