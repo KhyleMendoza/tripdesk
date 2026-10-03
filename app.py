@@ -25,10 +25,6 @@ PAGE_RULES = {
     "reports": {ROLE_OWNER, ROLE_ACCOUNTANT},
 }
 
-NAV_ITEMS = [
-    ("dashboard", "Dashboard", "M3 12l9-9 9 9M5 10v10h5v-6h4v6h5V10", "/"),
-]
-
 TRIP_STATUSES = ("pending", "confirmed", "completed", "cancelled")
 ITEM_KINDS = ("flight", "hotel", "tour", "transfer", "other")
 PAYMENT_KINDS = ("deposit", "payment", "refund")
@@ -117,6 +113,15 @@ def trip_money(db, trip_id, total_price):
     ).fetchone()
     paid = round(row["paid"] or 0, 2)
     return {"paid": paid, "balance": round((total_price or 0) - paid, 2)}
+
+
+def refresh_trip_total(db, trip_id):
+    row = db.execute(
+        "SELECT COALESCE(SUM(price), 0) AS total FROM itinerary_items WHERE trip_id = ?",
+        (trip_id,),
+    ).fetchone()
+    db.execute("UPDATE trips SET total_price = ? WHERE id = ?", (round(row["total"] or 0, 2), trip_id))
+    db.commit()
 
 
 def log_action(db, user_id, action, entity, entity_id):
@@ -808,6 +813,7 @@ def create_app(test_db=None):
             ),
         )
         db.commit()
+        refresh_trip_total(db, trip_id)
         return redirect(url_for("trip_detail", trip_id=trip_id))
 
     @app.route("/trips/<int:trip_id>/items/<int:item_id>/delete", methods=["POST"])
@@ -819,6 +825,7 @@ def create_app(test_db=None):
             abort(404)
         db.execute("DELETE FROM itinerary_items WHERE id = ? AND trip_id = ?", (item_id, trip_id))
         db.commit()
+        refresh_trip_total(db, trip_id)
         return redirect(url_for("trip_detail", trip_id=trip_id))
 
     @app.route("/payments")
@@ -1242,8 +1249,8 @@ def query_branch_stats(db, today, branch_ids):
     month = date.today().strftime("%Y-%m")
     rows = db.execute(
         "SELECT b.id, b.name, "
-        "SUM(CASE WHEN t.status IN ('pending','confirmed') THEN 1 ELSE 0 END) AS active_trips, "
-        "SUM(CASE WHEN t.departure_date = ? AND t.status != 'cancelled' THEN 1 ELSE 0 END) AS departures_today, "
+        "COUNT(DISTINCT CASE WHEN t.status IN ('pending','confirmed') THEN t.id END) AS active_trips, "
+        "COUNT(DISTINCT CASE WHEN t.departure_date = ? AND t.status != 'cancelled' THEN t.id END) AS departures_today, "
         "COALESCE(SUM(CASE WHEN strftime('%Y-%m', p.created_on) = ? AND p.kind != 'refund' THEN p.amount ELSE 0 END), 0) AS collected_month "
         "FROM branches b LEFT JOIN trips t ON t.branch_id = b.id "
         "LEFT JOIN payments p ON p.trip_id = t.id "
@@ -1342,6 +1349,8 @@ def validate_payment_form(db, values, trips):
         errors["created_on"] = "Enter a valid date."
     if not values["receipt_no"]:
         errors["receipt_no"] = "Enter a receipt number."
+    elif db.execute("SELECT 1 FROM payments WHERE receipt_no = ?", (values["receipt_no"],)).fetchone():
+        errors["receipt_no"] = "Receipt number already exists."
     if trip is not None and not errors.get("amount"):
         paid = trip["paid"] or 0
         if values["kind"] == "refund" and float(values["amount"]) - paid > 0.005:
@@ -1503,7 +1512,6 @@ def build_reminder_drafts(db, branch_ids, channels=("sms",)):
                     ),
                 )
                 created += 1
-            created += 1
     db.commit()
     return created
 
