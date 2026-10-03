@@ -1,54 +1,43 @@
+<img src="static/img/logo.png" alt="TripDesk" width="200">
+
 # TripDesk
 
-TripDesk is an operations console for travel agency staff to manage clients, trips, payments, and month-end reports across three branches.
+TripDesk is an operations console for travel agency staff. It tracks clients, trips, payments, reminders, and month-end reports across three branches.
 
 ## Getting started
-
-Requires Python 3.10 or newer.
 
 ```bash
 pip install -r requirements.txt
 py app.py
 ```
 
-Open http://127.0.0.1:5000 in a browser. On first start the app creates `tripdesk.db` and seeds demo data with departures around today so every screen has something to show.
+Open http://127.0.0.1:5000. The first start creates and seeds the database.
 
-Run the tests:
+Run tests: `py -m pytest`.
 
-```bash
-py -m pytest
-```
+## Test accounts
 
-## Demo accounts
+| Login | Password | Can do |
+| --- | --- | --- |
+| owner@tripdesk.local | Passw0rd! | Everything, all branches, locks months |
+| manager@tripdesk.local | Passw0rd! | Branch clients, trips, payments, reminders |
+| agent@tripdesk.local | Passw0rd! | Branch clients, trips, reminders |
+| accountant@tripdesk.local | Passw0rd! | Payments and month-end reports |
 
-All demo passwords are `Passw0rd!`.
+## Walkthrough
 
-| Role | Email |
-| --- | --- |
-| Owner | owner@tripdesk.local |
-| Branch manager | manager@tripdesk.local |
-| Agent | agent@tripdesk.local |
-| Accountant | accountant@tripdesk.local |
+1. Sign in with a staff account. ![Sign in](docs/screenshots/01-login.png)
+2. Check today's departures, unpaid balances, and per-branch stats. ![Dashboard](docs/screenshots/02-dashboard.png)
+3. Search clients and spot passport flags at a glance. ![Clients](docs/screenshots/03-clients.png)
+4. Open a client profile for contact details, passport info, and trip history. ![Client profile](docs/screenshots/04-client-detail.png)
+5. Browse trips by branch and booking status. ![Trips](docs/screenshots/05-trips.png)
+6. Open a trip dossier, update its booking status, and review itinerary and suppliers. ![Trip dossier](docs/screenshots/06-trip-detail.png)
+7. Build a new trip with client, dates, and assigned agent. ![New trip](docs/screenshots/07-trip-new.png)
+8. Record deposits and refunds and watch trip balances update. ![Payments](docs/screenshots/08-payments.png)
+9. Print a receipt for any payment. ![Receipt](docs/screenshots/09-receipt.png)
+10. Copy ready-made reminder texts for deposits, departures, and passport expiry. ![Reminders](docs/screenshots/10-reminders.png)
+11. Run the month-end report, check commissions, and lock the month as reviewed. ![Month-end report](docs/screenshots/11-reports.png)
 
-The owner sees all branches. Managers, agents, and accountants only see their own branch.
+## Built with
 
-## What staff can do
-
-- Dashboard: today's departures, unpaid balances, and per-branch stats.
-- Clients: searchable client list with passport status flags, profiles with contact details and passport info, and full trip history with balances.
-- Trips: searchable trip list filtered by status and branch, trip dossiers with dates, booking status, supplier details and vouchers, plus itinerary items staff can add or remove. Owners and branch managers update booking status.
-- Payments: searchable payments log with deposits and refunds, running balances per trip, printable receipts, and a record-payment form. Trip dossiers show their own payment history.
-- Reminders: outbox that composes deposit, departure, and passport texts ready to copy, with filters and mark-as-sent tracking.
-- Reports: month-end revenue, commissions, and outstanding balances by branch, printable, with the owner locking the month as reviewed.
-- Sign-in is required for every staff page. The accountant role cannot open clients or trips.
-
-![Sign in](docs/screenshots/01-login.png)
-![Dashboard](docs/screenshots/02-dashboard.png)
-![Clients](docs/screenshots/03-clients.png)
-![Client profile](docs/screenshots/04-client-detail.png)
-![Trips](docs/screenshots/05-trips.png)
-![Trip dossier](docs/screenshots/06-trip-detail.png)
-![Payments](docs/screenshots/08-payments.png)
-![Receipt](docs/screenshots/09-receipt.png)
-![Reminders](docs/screenshots/10-reminders.png)
-![Month-end report](docs/screenshots/11-reports.png)
+Python, Flask, SQLite, Jinja templates, and vanilla JS.
