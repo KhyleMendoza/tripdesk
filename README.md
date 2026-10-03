@@ -37,6 +37,9 @@ The owner sees all branches. Managers, agents, and accountants only see their ow
 - Dashboard: today's departures, unpaid balances, and per-branch stats.
 - Clients: searchable client list with passport status flags, profiles with contact details and passport info, and full trip history with balances.
 - Trips: searchable trip list filtered by status and branch, trip dossiers with dates, booking status, supplier details and vouchers, plus itinerary items staff can add or remove. Owners and branch managers update booking status.
+- Payments: searchable payments log with deposits and refunds, running balances per trip, printable receipts, and a record-payment form. Trip dossiers show their own payment history.
+- Reminders: outbox that composes deposit, departure, and passport texts ready to copy, with filters and mark-as-sent tracking.
+- Reports: month-end revenue, commissions, and outstanding balances by branch, printable, with the owner locking the month as reviewed.
 - Sign-in is required for every staff page. The accountant role cannot open clients or trips.
 
 ![Sign in](docs/screenshots/01-login.png)
@@ -45,3 +48,7 @@ The owner sees all branches. Managers, agents, and accountants only see their ow
 ![Client profile](docs/screenshots/04-client-detail.png)
 ![Trips](docs/screenshots/05-trips.png)
 ![Trip dossier](docs/screenshots/06-trip-detail.png)
+![Payments](docs/screenshots/08-payments.png)
+![Receipt](docs/screenshots/09-receipt.png)
+![Reminders](docs/screenshots/10-reminders.png)
+![Month-end report](docs/screenshots/11-reports.png)

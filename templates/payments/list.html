@@ -1,0 +1,55 @@
+{% extends "app.html" %}
+{% block title %}Payments - TripDesk{% endblock %}
+{% block content %}
+<header class="page-head row">
+  <div>
+    <h1>Payments</h1>
+    <p class="muted">${{ "{:,.2f}".format(net) }} net collected · ${{ "{:,.2f}".format(collected) }} in · ${{ "{:,.2f}".format(refunded) }} refunded{% if not can_filter and user.branch_name %} · {{ user.branch_name }}{% endif %}</p>
+  </div>
+  <a class="btn-primary btn-auto" href="{{ url_for('payment_new') }}">Record payment</a>
+</header>
+
+<section class="card">
+  <form class="toolbar" method="get" action="{{ url_for('payment_list') }}">
+    <label class="visually-hidden" for="q">Search payments</label>
+    <input id="q" name="q" type="search" placeholder="Search trip, client or receipt" value="{{ q }}">
+    <label class="visually-hidden" for="kind">Type</label>
+    <select id="kind" name="kind">
+      <option value="">All types</option>
+      {% for k in kinds %}
+      <option value="{{ k }}" {{ 'selected' if kind == k else '' }}>{{ k.title() }}</option>
+      {% endfor %}
+    </select>
+    {% if can_filter %}
+    <label class="visually-hidden" for="branch">Branch</label>
+    <select id="branch" name="branch">
+      <option value="">All branches</option>
+      {% for b in branches %}
+      <option value="{{ b.id }}" {{ 'selected' if active_branch == b.id|string else '' }}>{{ b.name }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    <button type="submit" class="btn-secondary">Search</button>
+  </form>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Receipt</th><th scope="col">Trip</th><th scope="col">Type</th><th scope="col">Method</th><th scope="col">Amount</th><th scope="col">Balance after</th>{% if can_filter %}<th scope="col">Branch</th>{% endif %}</tr></thead>
+    <tbody>
+    {% for p in payments %}
+      <tr>
+        <td><a href="{{ url_for('payment_receipt', payment_id=p.id) }}">{{ p.receipt_no }}</a><br><span class="muted small">{{ p.created_on }}{% if p.received_name %} · {{ p.received_name }}{% endif %}</span></td>
+        <td><a href="{{ url_for('trip_detail', trip_id=p.trip_id) }}">{{ p.trip_title }}</a><br><span class="muted small">{{ p.client_name }}</span></td>
+        <td><span class="pill pill-{{ 'cancelled' if p.kind == 'refund' else 'confirmed' }}">{{ p.kind.title() }}</span></td>
+        <td>{{ p.method.title() }}</td>
+        <td class="amount">{{ '-' if p.kind == 'refund' else '' }}${{ "{:,.2f}".format(p.amount) }}</td>
+        <td class="amount">${{ "{:,.2f}".format(p.balance_after) }}</td>
+        {% if can_filter %}<td>{{ p.branch_name }}</td>{% endif %}
+      </tr>
+    {% else %}
+      <tr><td colspan="7">No payments found. <a href="{{ url_for('payment_new') }}">Record the first payment</a>.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endblock %}

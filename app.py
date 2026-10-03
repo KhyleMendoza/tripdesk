@@ -31,6 +31,12 @@ NAV_ITEMS = [
 
 TRIP_STATUSES = ("pending", "confirmed", "completed", "cancelled")
 ITEM_KINDS = ("flight", "hotel", "tour", "transfer", "other")
+PAYMENT_KINDS = ("deposit", "payment", "refund")
+PAYMENT_METHODS = ("card", "cash", "transfer", "check")
+REMINDER_KINDS = ("deposit", "departure", "passport")
+REMINDER_CHANNELS = ("sms", "email")
+REMINDER_STATUSES = ("ready", "sent")
+COMMISSION_RATE = 0.05
 PASSPORT_SOON_DAYS = 90
 
 
@@ -47,6 +53,33 @@ def build_nav(role, active):
         )
     if page_allowed(role, "trips"):
         entries.append(("trips", "Trips", "/trips", "M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"))
+    if page_allowed(role, "payments"):
+        entries.append(
+            (
+                "payments",
+                "Payments",
+                "/payments",
+                "M3 10h18M7 15h4M5 19h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2z",
+            )
+        )
+    if page_allowed(role, "reminders"):
+        entries.append(
+            (
+                "reminders",
+                "Reminders",
+                "/reminders",
+                "M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M10.3 21a2 2 0 0 0 3.4 0",
+            )
+        )
+    if page_allowed(role, "reports"):
+        entries.append(
+            (
+                "reports",
+                "Reports",
+                "/reports",
+                "M3 3v18h18M8 17V9m5 8V5m5 12v-6",
+            )
+        )
     return [
         {"key": key, "label": label, "url": url, "icon": icon, "current": key == active}
         for key, label, url, icon in entries
@@ -615,6 +648,12 @@ def create_app(test_db=None):
         record.update(trip_money(db, trip["id"], trip["total_price"]))
         record["items_total"] = round(sum(i["price"] or 0 for i in items), 2)
         record["passport"] = passport_info(trip["passport_expiry"])
+        payments = db.execute(
+            "SELECT p.*, u.name AS received_name FROM payments p"
+            " LEFT JOIN users u ON u.id = p.received_by"
+            " WHERE p.trip_id = ? ORDER BY p.created_on DESC, p.id DESC",
+            (trip_id,),
+        ).fetchall()
         return render_template(
             "trips/detail.html",
             user=g.user,
@@ -625,6 +664,8 @@ def create_app(test_db=None):
             statuses=TRIP_STATUSES,
             kinds=ITEM_KINDS,
             can_change_status=g.user["role"] in (ROLE_OWNER, ROLE_MANAGER),
+            payments=payments,
+            can_record=page_allowed(g.user["role"], "payments"),
         )
 
     @app.route("/trips/<int:trip_id>/edit", methods=["POST"])
@@ -653,6 +694,12 @@ def create_app(test_db=None):
             record.update(trip_money(db, trip["id"], trip["total_price"]))
             record["items_total"] = round(sum(i["price"] or 0 for i in items), 2)
             record["passport"] = passport_info(trip["passport_expiry"])
+            payments = db.execute(
+                "SELECT p.*, u.name AS received_name FROM payments p"
+                " LEFT JOIN users u ON u.id = p.received_by"
+                " WHERE p.trip_id = ? ORDER BY p.created_on DESC, p.id DESC",
+                (trip_id,),
+            ).fetchall()
             return (
                 render_template(
                     "trips/detail.html",
@@ -664,6 +711,8 @@ def create_app(test_db=None):
                     statuses=TRIP_STATUSES,
                     kinds=ITEM_KINDS,
                     can_change_status=g.user["role"] in (ROLE_OWNER, ROLE_MANAGER),
+                    payments=payments,
+                    can_record=page_allowed(g.user["role"], "payments"),
                     edit_errors=errors,
                     edit_values={"title": title or trip["title"], "departure_date": departure, "return_date": return_day},
                 ),
@@ -721,6 +770,12 @@ def create_app(test_db=None):
             record.update(trip_money(db, trip["id"], trip["total_price"]))
             record["items_total"] = round(sum(i["price"] or 0 for i in items), 2)
             record["passport"] = passport_info(trip["passport_expiry"])
+            payments = db.execute(
+                "SELECT p.*, u.name AS received_name FROM payments p"
+                " LEFT JOIN users u ON u.id = p.received_by"
+                " WHERE p.trip_id = ? ORDER BY p.created_on DESC, p.id DESC",
+                (trip_id,),
+            ).fetchall()
             return (
                 render_template(
                     "trips/detail.html",
@@ -732,6 +787,8 @@ def create_app(test_db=None):
                     statuses=TRIP_STATUSES,
                     kinds=ITEM_KINDS,
                     can_change_status=g.user["role"] in (ROLE_OWNER, ROLE_MANAGER),
+                    payments=payments,
+                    can_record=page_allowed(g.user["role"], "payments"),
                     item_errors=errors,
                     item_values=values,
                 ),
@@ -763,6 +820,322 @@ def create_app(test_db=None):
         db.execute("DELETE FROM itinerary_items WHERE id = ? AND trip_id = ?", (item_id, trip_id))
         db.commit()
         return redirect(url_for("trip_detail", trip_id=trip_id))
+
+    @app.route("/payments")
+    @require_page("payments")
+    def payment_list():
+        db = get_db()
+        query = request.args.get("q", "").strip()
+        kind = request.args.get("kind", "")
+        branch_param = request.args.get("branch", "")
+        branch_ids = visible_branch_ids(g.user)
+        clauses = []
+        params = []
+        active_branch = ""
+        if branch_ids is None:
+            if branch_param.isdigit():
+                clauses.append("t.branch_id = ?")
+                params.append(int(branch_param))
+                active_branch = branch_param
+        else:
+            extra, branch_params = branch_filter(branch_ids)
+            clauses.append("1 = 1" + extra)
+            params.extend(branch_params)
+        if kind in PAYMENT_KINDS:
+            clauses.append("p.kind = ?")
+            params.append(kind)
+        if query:
+            clauses.append("(t.title LIKE ? OR c.full_name LIKE ? OR p.receipt_no LIKE ?)")
+            params.extend(["%" + query + "%"] * 3)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = db.execute(
+            "SELECT p.*, t.title AS trip_title, t.total_price, t.departure_date,"
+            " c.full_name AS client_name, b.name AS branch_name, u.name AS received_name"
+            " FROM payments p JOIN trips t ON t.id = p.trip_id"
+            " JOIN clients c ON c.id = t.client_id"
+            " JOIN branches b ON b.id = t.branch_id"
+            " LEFT JOIN users u ON u.id = p.received_by " + where + " ORDER BY p.created_on DESC, p.id DESC",
+            params,
+        ).fetchall()
+        running = running_balances(db)
+        payments = []
+        for row in rows:
+            item = dict(row)
+            item["balance_after"] = round(row["total_price"] - running.get(row["id"], 0), 2)
+            payments.append(item)
+        collected = round(sum(p["amount"] for p in payments if p["kind"] != "refund"), 2)
+        refunded = round(sum(p["amount"] for p in payments if p["kind"] == "refund"), 2)
+        return render_template(
+            "payments/list.html",
+            user=g.user,
+            nav=build_nav(g.user["role"], "payments"),
+            payments=payments,
+            q=query,
+            kind=kind,
+            kinds=PAYMENT_KINDS,
+            branches=g.branches,
+            active_branch=active_branch,
+            can_filter=g.user["role"] == ROLE_OWNER,
+            collected=collected,
+            refunded=refunded,
+            net=round(collected - refunded, 2),
+        )
+
+    @app.route("/payments/new", methods=["GET", "POST"])
+    @require_page("payments")
+    def payment_new():
+        db = get_db()
+        branch_ids = visible_branch_ids(g.user)
+        extra, params = branch_filter(branch_ids)
+        trips = db.execute(
+            "SELECT t.id, t.title, t.total_price, t.branch_id, c.full_name AS client_name,"
+            " b.name AS branch_name,"
+            " COALESCE((SELECT SUM(CASE WHEN p.kind = 'refund' THEN -p.amount ELSE p.amount END)"
+            " FROM payments p WHERE p.trip_id = t.id), 0) AS paid"
+            " FROM trips t JOIN clients c ON c.id = t.client_id"
+            " JOIN branches b ON b.id = t.branch_id"
+            f" WHERE t.status != 'cancelled'{extra} ORDER BY t.departure_date",
+            params,
+        ).fetchall()
+        preset = request.args.get("trip_id", "")
+        values = {
+            "trip_id": preset,
+            "amount": "",
+            "kind": "deposit",
+            "method": "card",
+            "created_on": date.today().isoformat(),
+            "receipt_no": next_receipt_no(db),
+        }
+        errors = {}
+        if request.method == "POST":
+            values = {
+                "trip_id": request.form.get("trip_id", ""),
+                "amount": request.form.get("amount", "").strip(),
+                "kind": request.form.get("kind", ""),
+                "method": request.form.get("method", ""),
+                "created_on": request.form.get("created_on", "").strip(),
+                "receipt_no": request.form.get("receipt_no", "").strip() or next_receipt_no(db),
+            }
+            errors = validate_payment_form(db, values, trips)
+            if not errors:
+                cur = db.execute(
+                    "INSERT INTO payments (trip_id, amount, kind, method, receipt_no, created_on, received_by)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        int(values["trip_id"]),
+                        round(float(values["amount"]), 2),
+                        values["kind"],
+                        values["method"],
+                        values["receipt_no"],
+                        values["created_on"],
+                        g.user["id"],
+                    ),
+                )
+                db.commit()
+                log_action(db, g.user["id"], "record:" + values["kind"], "payment", cur.lastrowid)
+                return redirect(url_for("payment_receipt", payment_id=cur.lastrowid))
+        options = []
+        for trip in trips:
+            balance = round(trip["total_price"] - (trip["paid"] or 0), 2)
+            option = dict(trip)
+            option["balance"] = balance
+            options.append(option)
+        return render_template(
+            "payments/form.html",
+            user=g.user,
+            nav=build_nav(g.user["role"], "payments"),
+            values=values,
+            errors=errors,
+            trips=options,
+            kinds=PAYMENT_KINDS,
+            methods=PAYMENT_METHODS,
+        )
+
+    @app.route("/payments/<int:payment_id>/receipt")
+    @require_page("payments")
+    def payment_receipt(payment_id):
+        db = get_db()
+        payment = scoped_payment(db, g.user, payment_id)
+        if payment is None:
+            abort(404)
+        record = dict(payment)
+        record.update(trip_money(db, payment["trip_id"], payment["total_price"]))
+        return render_template(
+            "payments/receipt.html",
+            user=g.user,
+            nav=build_nav(g.user["role"], "payments"),
+            payment=record,
+        )
+
+    @app.route("/reminders")
+    @require_page("reminders")
+    def reminder_list():
+        db = get_db()
+        kind = request.args.get("kind", "")
+        channel = request.args.get("channel", "")
+        status = request.args.get("status", "")
+        branch_ids = visible_branch_ids(g.user)
+        extra, params = branch_filter(branch_ids, column="COALESCE(t.branch_id, c.branch_id)")
+        clauses = ["1 = 1" + extra]
+        filter_params = list(params)
+        if kind in REMINDER_KINDS:
+            clauses.append("r.kind = ?")
+            filter_params.append(kind)
+        if channel in REMINDER_CHANNELS:
+            clauses.append("r.channel = ?")
+            filter_params.append(channel)
+        if status in REMINDER_STATUSES:
+            clauses.append("r.status = ?")
+            filter_params.append(status)
+        where = "WHERE " + " AND ".join(clauses)
+        rows = db.execute(
+            "SELECT r.*, c.full_name AS client_name, c.phone AS client_phone, c.email AS client_email,"
+            " t.title AS trip_title, t.departure_date,"
+            " COALESCE(t.branch_id, c.branch_id) AS branch_id,"
+            " (SELECT b.name FROM branches b WHERE b.id = COALESCE(t.branch_id, c.branch_id)) AS branch_name"
+            " FROM reminders r"
+            " LEFT JOIN trips t ON t.id = r.trip_id"
+            " LEFT JOIN clients c ON c.id = r.client_id " + where + " ORDER BY r.due_date, r.id",
+            filter_params,
+        ).fetchall()
+        counts = db.execute(
+            "SELECT r.status AS status, COUNT(*) AS n FROM reminders r"
+            " LEFT JOIN trips t ON t.id = r.trip_id"
+            " LEFT JOIN clients c ON c.id = r.client_id"
+            f" WHERE 1 = 1{extra} GROUP BY r.status",
+            params,
+        ).fetchall()
+        tally = {row["status"]: row["n"] for row in counts}
+        return render_template(
+            "reminders/list.html",
+            user=g.user,
+            nav=build_nav(g.user["role"], "reminders"),
+            reminders=rows,
+            kind=kind,
+            kinds=REMINDER_KINDS,
+            channel=channel,
+            channels=REMINDER_CHANNELS,
+            status=status,
+            statuses=REMINDER_STATUSES,
+            ready_count=tally.get("ready", 0),
+            sent_count=tally.get("sent", 0),
+        )
+
+    @app.route("/reminders/generate", methods=["POST"])
+    @require_page("reminders")
+    def reminder_generate():
+        db = get_db()
+        created = build_reminder_drafts(db, visible_branch_ids(g.user))
+        log_action(db, g.user["id"], "generate", "reminders", created)
+        return redirect(url_for("reminder_list"))
+
+    @app.route("/reminders/<int:reminder_id>/sent", methods=["POST"])
+    @require_page("reminders")
+    def reminder_sent(reminder_id):
+        db = get_db()
+        reminder = scoped_reminder(db, g.user, reminder_id)
+        if reminder is None:
+            abort(404)
+        db.execute("UPDATE reminders SET status = 'sent' WHERE id = ?", (reminder_id,))
+        db.commit()
+        return redirect(url_for("reminder_list"))
+
+    @app.route("/reminders/<int:reminder_id>/delete", methods=["POST"])
+    @require_page("reminders")
+    def reminder_delete(reminder_id):
+        db = get_db()
+        reminder = scoped_reminder(db, g.user, reminder_id)
+        if reminder is None:
+            abort(404)
+        db.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+        db.commit()
+        return redirect(url_for("reminder_list"))
+
+    @app.route("/reports")
+    @require_page("reports")
+    def report():
+        import calendar
+
+        db = get_db()
+        month = request.args.get("month", "").strip() or date.today().strftime("%Y-%m")
+        try:
+            year_num, month_num = (int(part) for part in month.split("-"))
+            calendar.monthrange(year_num, month_num)
+        except (ValueError, TypeError):
+            month = date.today().strftime("%Y-%m")
+            year_num, month_num = (int(part) for part in month.split("-"))
+        label = calendar.month_name[month_num] + " " + str(year_num)
+        branch_param = request.args.get("branch", "")
+        branch_ids = visible_branch_ids(g.user)
+        active_branch = ""
+        report_branch_ids = branch_ids
+        if branch_ids is None and branch_param.isdigit():
+            report_branch_ids = [int(branch_param)]
+            active_branch = branch_param
+        revenue = query_revenue_by_branch(db, month, report_branch_ids)
+        commissions = query_commissions(db, month, report_branch_ids)
+        outstanding = []
+        for branch in g.branches:
+            if report_branch_ids is not None and branch["id"] not in report_branch_ids:
+                continue
+            outstanding.append(
+                {"name": branch["name"], "amount": outstanding_for_branch(db, branch["id"])}
+            )
+        entity = month if not active_branch else month + ":branch-" + active_branch
+        reviewed = (
+            db.execute(
+                "SELECT id FROM audit_log WHERE action = 'month-reviewed' AND entity = ?",
+                (entity,),
+            ).fetchone()
+            is not None
+        )
+        totals = {
+            "revenue": round(sum(r["revenue"] for r in revenue), 2),
+            "refunds": round(sum(r["refunds"] for r in revenue), 2),
+            "commission": round(sum(c["commission"] for c in commissions), 2),
+            "outstanding": round(sum(o["amount"] for o in outstanding), 2),
+        }
+        return render_template(
+            "reports/report.html",
+            user=g.user,
+            nav=build_nav(g.user["role"], "reports"),
+            month=month,
+            label=label,
+            revenue=revenue,
+            commissions=commissions,
+            outstanding=outstanding,
+            totals=totals,
+            reviewed=reviewed,
+            branches=g.branches,
+            active_branch=active_branch,
+            can_filter=g.user["role"] == ROLE_OWNER,
+            rate=int(COMMISSION_RATE * 100),
+        )
+
+    @app.route("/reports/review", methods=["POST"])
+    @require_page("reports")
+    def report_review():
+        if g.user["role"] != ROLE_OWNER:
+            return render_template("denied.html"), 403
+        db = get_db()
+        month = request.form.get("month", "").strip() or date.today().strftime("%Y-%m")
+        branch_param = request.form.get("branch", "")
+        entity = month if not branch_param.isdigit() else month + ":branch-" + branch_param
+        exists = db.execute(
+            "SELECT id FROM audit_log WHERE action = 'month-reviewed' AND entity = ?",
+            (entity,),
+        ).fetchone()
+        if exists is None:
+            db.execute(
+                "INSERT INTO audit_log (user_id, action, entity, entity_id, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (g.user["id"], "month-reviewed", entity, None, date.today().isoformat()),
+            )
+            db.commit()
+        target = url_for("report", month=month)
+        if branch_param.isdigit():
+            target += "&branch=" + branch_param
+        return redirect(target)
 
     @app.route("/health")
     def health():
@@ -878,6 +1251,292 @@ def query_branch_stats(db, today, branch_ids):
             }
         )
     return stats
+
+
+def next_receipt_no(db):
+    numbers = []
+    for row in db.execute("SELECT receipt_no FROM payments").fetchall():
+        text = (row["receipt_no"] or "").strip()
+        if text[:2].upper() == "R-" and text[2:].isdigit():
+            numbers.append(int(text[2:]))
+    return "R-" + str(max(numbers, default=5199) + 1)
+
+
+def scoped_payment(db, user, payment_id):
+    branch_ids = visible_branch_ids(user)
+    extra, params = branch_filter(branch_ids)
+    return db.execute(
+        "SELECT p.*, t.title AS trip_title, t.total_price, t.departure_date, t.return_date,"
+        " t.status AS trip_status, t.client_id, c.full_name AS client_name, c.email AS client_email,"
+        " c.phone AS client_phone, b.name AS branch_name, b.phone AS branch_phone,"
+        " u.name AS agent_name, r.name AS received_name FROM payments p"
+        " JOIN trips t ON t.id = p.trip_id"
+        " JOIN clients c ON c.id = t.client_id"
+        " JOIN branches b ON b.id = t.branch_id"
+        " LEFT JOIN users u ON u.id = t.agent_id"
+        " LEFT JOIN users r ON r.id = p.received_by"
+        f" WHERE p.id = ?{extra}",
+        [payment_id, *params],
+    ).fetchone()
+
+
+def scoped_reminder(db, user, reminder_id):
+    branch_ids = visible_branch_ids(user)
+    extra, params = branch_filter(branch_ids, column="COALESCE(t.branch_id, c.branch_id)")
+    return db.execute(
+        "SELECT r.* FROM reminders r"
+        " LEFT JOIN trips t ON t.id = r.trip_id"
+        " LEFT JOIN clients c ON c.id = r.client_id"
+        f" WHERE r.id = ?{extra}",
+        [reminder_id, *params],
+    ).fetchone()
+
+
+def running_balances(db):
+    paid = {}
+    for row in db.execute(
+        "SELECT p.id, p.trip_id, p.amount, p.kind, t.total_price FROM payments p"
+        " JOIN trips t ON t.id = p.trip_id ORDER BY p.created_on, p.id"
+    ).fetchall():
+        signed = -row["amount"] if row["kind"] == "refund" else row["amount"]
+        paid[row["trip_id"]] = paid.get(row["trip_id"], 0) + signed
+        paid["after:" + str(row["id"])] = round(row["total_price"] - paid[row["trip_id"]], 2)
+    return {
+        int(key.split(":")[1]): value
+        for key, value in paid.items()
+        if isinstance(key, str) and key.startswith("after:")
+    }
+
+
+def validate_payment_form(db, values, trips):
+    errors = {}
+    options = {str(t["id"]): t for t in trips}
+    trip = options.get(values["trip_id"])
+    if trip is None:
+        errors["trip_id"] = "Choose a trip."
+    try:
+        amount = float(values["amount"])
+        if amount <= 0:
+            errors["amount"] = "Enter an amount above zero."
+    except (TypeError, ValueError):
+        errors["amount"] = "Enter an amount."
+    if values["kind"] not in PAYMENT_KINDS:
+        errors["kind"] = "Choose a type."
+    if values["method"] not in PAYMENT_METHODS:
+        errors["method"] = "Choose a method."
+    if parse_iso_day(values["created_on"]) is None:
+        errors["created_on"] = "Enter a valid date."
+    if not values["receipt_no"]:
+        errors["receipt_no"] = "Enter a receipt number."
+    if trip is not None and not errors.get("amount"):
+        paid = trip["paid"] or 0
+        if values["kind"] == "refund" and float(values["amount"]) - paid > 0.005:
+            errors["amount"] = "Refund cannot exceed $" + "{:,.2f}".format(paid) + " paid."
+    return errors
+
+
+def deposit_message(client_name, trip_title, balance, departure_date, branch_name):
+    return (
+        "Hello "
+        + client_name
+        + ", this is "
+        + branch_name
+        + ". A balance of $"
+        + "{:,.2f}".format(balance)
+        + " remains on your trip '"
+        + trip_title
+        + "' departing "
+        + departure_date
+        + ". Reply to this message to arrange payment."
+    )
+
+
+def departure_message(client_name, trip_title, departure_date, days_left):
+    day_word = "tomorrow" if days_left == 1 else "in " + str(days_left) + " days"
+    return (
+        "Hello "
+        + client_name
+        + ", your trip '"
+        + trip_title
+        + "' departs "
+        + day_word
+        + " on "
+        + departure_date
+        + ". Please arrive with your passport and voucher copies. Safe travels."
+    )
+
+
+def passport_message(client_name, expiry, days_left):
+    timing = "expired on " + expiry if days_left < 0 else "expires on " + expiry
+    return (
+        "Hello "
+        + client_name
+        + ", your passport "
+        + timing
+        + ". Many trips require six months of validity, so please renew before you travel."
+    )
+
+
+def build_reminder_drafts(db, branch_ids):
+    today = date.today()
+    created = 0
+    extra, params = branch_filter(branch_ids, column="t.branch_id")
+    unpaid = db.execute(
+        "SELECT t.id AS trip_id, t.title, t.departure_date, t.total_price, c.id AS client_id,"
+        " c.full_name AS client_name, b.name AS branch_name,"
+        " COALESCE((SELECT SUM(CASE WHEN p.kind = 'refund' THEN -p.amount ELSE p.amount END)"
+        " FROM payments p WHERE p.trip_id = t.id), 0) AS paid"
+        " FROM trips t JOIN clients c ON c.id = t.client_id JOIN branches b ON b.id = t.branch_id"
+        f" WHERE t.status != 'cancelled'{extra}",
+        params,
+    ).fetchall()
+    for row in unpaid:
+        balance = round(row["total_price"] - (row["paid"] or 0), 2)
+        if balance <= 0.50:
+            continue
+        exists = db.execute(
+            "SELECT id FROM reminders WHERE trip_id = ? AND kind = 'deposit' AND status = 'ready'",
+            (row["trip_id"],),
+        ).fetchone()
+        if exists is None:
+            db.execute(
+                "INSERT INTO reminders (trip_id, client_id, kind, channel, message, status, due_date)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    row["trip_id"],
+                    row["client_id"],
+                    "deposit",
+                    "sms",
+                    deposit_message(
+                        row["client_name"], row["title"], balance, row["departure_date"], row["branch_name"]
+                    ),
+                    "ready",
+                    today.isoformat(),
+                ),
+            )
+            created += 1
+    soon = db.execute(
+        "SELECT t.id AS trip_id, t.title, t.departure_date, c.id AS client_id, c.full_name AS client_name"
+        " FROM trips t JOIN clients c ON c.id = t.client_id"
+        f" WHERE t.status != 'cancelled' AND t.departure_date BETWEEN ? AND ?{extra}",
+        [today.isoformat(), (today + timedelta(days=2)).isoformat(), *params],
+    ).fetchall()
+    for row in soon:
+        dep = parse_iso_day(row["departure_date"])
+        if dep is None:
+            continue
+        days_left = (dep - today).days
+        exists = db.execute(
+            "SELECT id FROM reminders WHERE trip_id = ? AND kind = 'departure' AND status = 'ready'",
+            (row["trip_id"],),
+        ).fetchone()
+        if exists is None:
+            db.execute(
+                "INSERT INTO reminders (trip_id, client_id, kind, channel, message, status, due_date)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    row["trip_id"],
+                    row["client_id"],
+                    "departure",
+                    "sms",
+                    departure_message(row["client_name"], row["title"], row["departure_date"], days_left),
+                    "ready",
+                    row["departure_date"],
+                ),
+            )
+            created += 1
+    cextra, cparams = branch_filter(branch_ids, column="c.branch_id")
+    clients = db.execute(
+        "SELECT c.id, c.full_name, c.passport_expiry FROM clients c"
+        f" WHERE c.passport_expiry IS NOT NULL AND c.passport_expiry != ''{cextra}",
+        cparams,
+    ).fetchall()
+    for row in clients:
+        expiry = parse_iso_day(row["passport_expiry"])
+        if expiry is None:
+            continue
+        days_left = (expiry - today).days
+        if days_left > PASSPORT_SOON_DAYS:
+            continue
+        exists = db.execute(
+            "SELECT id FROM reminders WHERE trip_id IS NULL AND client_id = ?"
+            " AND kind = 'passport' AND status = 'ready'",
+            (row["id"],),
+        ).fetchone()
+        if exists is None:
+            db.execute(
+                "INSERT INTO reminders (trip_id, client_id, kind, channel, message, status, due_date)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    None,
+                    row["id"],
+                    "passport",
+                    "sms",
+                    passport_message(row["full_name"], row["passport_expiry"], days_left),
+                    "ready",
+                    today.isoformat(),
+                ),
+            )
+            created += 1
+    db.commit()
+    return created
+
+
+def query_revenue_by_branch(db, month, branch_ids):
+    extra, params = branch_filter(branch_ids, column="b.id")
+    rows = db.execute(
+        "SELECT b.id, b.name,"
+        " COALESCE(SUM(CASE WHEN strftime('%Y-%m', p.created_on) = ? AND p.kind != 'refund'"
+        " THEN p.amount ELSE 0 END), 0) AS collected,"
+        " COALESCE(SUM(CASE WHEN strftime('%Y-%m', p.created_on) = ? AND p.kind = 'refund'"
+        " THEN p.amount ELSE 0 END), 0) AS refunds,"
+        " COUNT(CASE WHEN strftime('%Y-%m', p.created_on) = ? THEN 1 END) AS payment_count"
+        " FROM branches b LEFT JOIN trips t ON t.branch_id = b.id"
+        " LEFT JOIN payments p ON p.trip_id = t.id"
+        f" WHERE 1 = 1{extra} GROUP BY b.id, b.name ORDER BY b.name",
+        [month, month, month, *params],
+    ).fetchall()
+    result = []
+    for row in rows:
+        collected = round(row["collected"] or 0, 2)
+        refunds = round(row["refunds"] or 0, 2)
+        result.append(
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "collected": collected,
+                "refunds": refunds,
+                "revenue": round(collected - refunds, 2),
+                "payment_count": row["payment_count"] or 0,
+            }
+        )
+    return result
+
+
+def query_commissions(db, month, branch_ids):
+    extra, params = branch_filter(branch_ids, column="u.branch_id")
+    rows = db.execute(
+        "SELECT u.id, u.name, COALESCE(b.name, 'No branch') AS branch_name,"
+        " COALESCE(SUM(CASE WHEN strftime('%Y-%m', p.created_on) = ? AND p.kind != 'refund'"
+        " THEN p.amount WHEN strftime('%Y-%m', p.created_on) = ? AND p.kind = 'refund'"
+        " THEN -p.amount ELSE 0 END), 0) AS revenue"
+        " FROM users u LEFT JOIN branches b ON b.id = u.branch_id"
+        " LEFT JOIN trips t ON t.agent_id = u.id LEFT JOIN payments p ON p.trip_id = t.id"
+        f" WHERE u.role = 'agent'{extra} GROUP BY u.id, u.name, b.name ORDER BY u.name",
+        [month, month, *params],
+    ).fetchall()
+    result = []
+    for row in rows:
+        revenue = round(row["revenue"] or 0, 2)
+        result.append(
+            {
+                "name": row["name"],
+                "branch_name": row["branch_name"],
+                "revenue": revenue,
+                "commission": round(revenue * COMMISSION_RATE, 2),
+            }
+        )
+    return result
 
 
 def outstanding_for_branch(db, branch_id):

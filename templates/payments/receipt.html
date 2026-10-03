@@ -1,0 +1,32 @@
+{% extends "app.html" %}
+{% block title %}Receipt {{ payment.receipt_no }} - TripDesk{% endblock %}
+{% block content %}
+<header class="page-head row no-print">
+  <div>
+    <p class="back"><a href="{{ url_for('payment_list') }}">← Payments</a></p>
+    <h1>Receipt {{ payment.receipt_no }}</h1>
+  </div>
+  <button type="button" class="btn-primary btn-auto" onclick="window.print()">Print receipt</button>
+</header>
+
+<section class="card receipt" aria-label="Payment receipt">
+  <div class="receipt-head">
+    <div>
+      <div class="receipt-brand">TripDesk · {{ payment.branch_name }}</div>
+      <div class="muted small">{{ payment.branch_phone }}</div>
+    </div>
+    <div class="receipt-no">{{ payment.receipt_no }}<br><span class="muted small">{{ payment.created_on }}</span></div>
+  </div>
+  <dl class="kv">
+    <div><dt>Received from</dt><dd>{{ payment.client_name }}<br><span class="muted small">{{ payment.client_email }} · {{ payment.client_phone }}</span></dd></div>
+    <div><dt>Trip</dt><dd>{{ payment.trip_title }}<br><span class="muted small">Departs {{ payment.departure_date }} · Returns {{ payment.return_date }}</span></dd></div>
+    <div><dt>Type</dt><dd>{{ payment.kind.title() }} · {{ payment.method.title() }}</dd></div>
+    <div><dt>Amount</dt><dd class="amount">{{ '-' if payment.kind == 'refund' else '' }}${{ "{:,.2f}".format(payment.amount) }}</dd></div>
+    <div><dt>Trip total</dt><dd>${{ "{:,.2f}".format(payment.total_price) }}</dd></div>
+    <div><dt>Total paid</dt><dd>${{ "{:,.2f}".format(payment.paid) }}</dd></div>
+    <div><dt>Balance due</dt><dd class="amount">${{ "{:,.2f}".format(payment.balance) }}</dd></div>
+    <div><dt>Received by</dt><dd>{{ payment.received_name if payment.received_name else '—' }}</dd></div>
+  </dl>
+  <p class="muted small receipt-sign">Thank you. Please keep this receipt for your records.</p>
+</section>
+{% endblock %}

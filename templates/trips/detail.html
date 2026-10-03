@@ -60,6 +60,35 @@
   </section>
 </div>
 
+<section class="card" aria-label="Payments">
+  <div class="row">
+    <h2>Payments ({{ payments|length }})</h2>
+    {% if can_record %}
+    <a class="btn-primary btn-auto" href="{{ url_for('payment_new') }}?trip_id={{ trip.id }}">Record payment</a>
+    {% endif %}
+  </div>
+  {% if payments %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Receipt</th><th scope="col">Date</th><th scope="col">Type</th><th scope="col">Method</th><th scope="col">Amount</th></tr></thead>
+    <tbody>
+    {% for p in payments %}
+      <tr>
+        <td>{% if can_record %}<a href="{{ url_for('payment_receipt', payment_id=p.id) }}">{{ p.receipt_no }}</a>{% else %}{{ p.receipt_no }}{% endif %}</td>
+        <td>{{ p.created_on }}</td>
+        <td><span class="pill pill-{{ 'cancelled' if p.kind == 'refund' else 'confirmed' }}">{{ p.kind.title() }}</span></td>
+        <td>{{ p.method.title() }}</td>
+        <td class="amount">{{ '-' if p.kind == 'refund' else '' }}${{ "{:,.2f}".format(p.amount) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="muted">No payments recorded yet{% if can_record %}. <a href="{{ url_for('payment_new') }}?trip_id={{ trip.id }}">Record a deposit</a>{% endif %}.</p>
+  {% endif %}
+</section>
+
 <section class="card" aria-label="Itinerary">
   <h2>Itinerary ({{ items|length }})</h2>
   {% if items %}

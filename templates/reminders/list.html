@@ -1,0 +1,90 @@
+{% extends "app.html" %}
+{% block title %}Reminders - TripDesk{% endblock %}
+{% block content %}
+<header class="page-head row">
+  <div>
+    <h1>Reminder outbox</h1>
+    <p class="muted">{{ ready_count }} ready · {{ sent_count }} sent</p>
+  </div>
+  <form method="post" action="{{ url_for('reminder_generate') }}">
+    <button type="submit" class="btn-primary btn-auto">Compose reminders</button>
+  </form>
+</header>
+
+<section class="card">
+  <form class="toolbar" method="get" action="{{ url_for('reminder_list') }}">
+    <label class="visually-hidden" for="kind">Kind</label>
+    <select id="kind" name="kind">
+      <option value="">All kinds</option>
+      {% for k in kinds %}
+      <option value="{{ k }}" {{ 'selected' if kind == k else '' }}>{{ k.title() }}</option>
+      {% endfor %}
+    </select>
+    <label class="visually-hidden" for="channel">Channel</label>
+    <select id="channel" name="channel">
+      <option value="">SMS + email</option>
+      {% for c in channels %}
+      <option value="{{ c }}" {{ 'selected' if channel == c else '' }}>{{ c.upper() }}</option>
+      {% endfor %}
+    </select>
+    <label class="visually-hidden" for="status">Status</label>
+    <select id="status" name="status">
+      <option value="">Ready + sent</option>
+      {% for s in statuses %}
+      <option value="{{ s }}" {{ 'selected' if status == s else '' }}>{{ s.title() }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn-secondary">Filter</button>
+  </form>
+  {% if reminders %}
+  <ul class="outbox">
+  {% for r in reminders %}
+    <li class="reminder">
+      <div class="reminder-meta">
+        <span class="pill pill-{{ r.kind if r.kind in ['deposit', 'departure'] else 'completed' }}">{{ r.kind.title() }}</span>
+        <span class="pill pill-{{ 'confirmed' if r.status == 'sent' else 'pending' }}">{{ r.status.title() }}</span>
+        <span class="muted small">{{ r.channel.upper() }}{% if r.due_date %} · due {{ r.due_date }}{% endif %}{% if r.branch_name %} · {{ r.branch_name }}{% endif %}</span>
+      </div>
+      <div class="reminder-to"><strong>{{ r.client_name if r.client_name else 'Unknown client' }}</strong>{% if r.client_phone or r.client_email %} <span class="muted small">{{ r.client_phone if r.channel == 'sms' else r.client_email }}</span>{% endif %}{% if r.trip_title %} <span class="muted small">· {{ r.trip_title }}{% if r.departure_date %} (departs {{ r.departure_date }}){% endif %}</span>{% endif %}</div>
+      <p class="message" id="msg-{{ r.id }}">{{ r.message }}</p>
+      <div class="reminder-actions">
+        <button type="button" class="btn-secondary" data-copy="msg-{{ r.id }}">Copy text</button>
+        {% if r.status == 'ready' %}
+        <form method="post" action="{{ url_for('reminder_sent', reminder_id=r.id) }}">
+          <button type="submit" class="btn-primary btn-auto">Mark sent</button>
+        </form>
+        {% endif %}
+        <form method="post" action="{{ url_for('reminder_delete', reminder_id=r.id) }}" onsubmit="return confirm('Discard this reminder?');">
+          <button type="submit" class="btn-danger">Discard</button>
+        </form>
+      </div>
+    </li>
+  {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">The outbox is empty. Compose reminders to draft deposit, departure, and passport texts.</p>
+  {% endif %}
+</section>
+<script>
+document.querySelectorAll("[data-copy]").forEach(function (button) {
+  button.addEventListener("click", function () {
+    var text = document.getElementById(button.getAttribute("data-copy")).textContent;
+    var done = function () {
+      button.textContent = "Copied";
+      setTimeout(function () { button.textContent = "Copy text"; }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, done);
+    } else {
+      var area = document.createElement("textarea");
+      area.value = text;
+      document.body.appendChild(area);
+      area.select();
+      try { document.execCommand("copy"); } catch (e) {}
+      document.body.removeChild(area);
+      done();
+    }
+  });
+});
+</script>
+{% endblock %}

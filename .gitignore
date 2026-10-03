@@ -8,5 +8,4 @@ instance/
 *.sqlite3
 .env
 .pytest_cache/
-docs/screenshots/
 report/

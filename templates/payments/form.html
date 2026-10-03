@@ -1,0 +1,58 @@
+{% extends "app.html" %}
+{% block title %}Record payment - TripDesk{% endblock %}
+{% block content %}
+<header class="page-head">
+  <p class="back"><a href="{{ url_for('payment_list') }}">← Payments</a></p>
+  <h1>Record payment</h1>
+</header>
+
+<section class="card form-card">
+  <form method="post" action="{{ url_for('payment_new') }}" novalidate>
+    <label for="trip_id">Trip</label>
+    <select id="trip_id" name="trip_id">
+      <option value="">Choose a trip</option>
+      {% for t in trips %}
+      <option value="{{ t.id }}" {{ 'selected' if values.trip_id == t.id|string else '' }}>{{ t.title }} · {{ t.client_name }} · ${{ "{:,.2f}".format(t.balance) }} due</option>
+      {% endfor %}
+    </select>
+    {% if errors.trip_id %}<p class="field-error">{{ errors.trip_id }}</p>{% endif %}
+    <div class="form-grid">
+      <div>
+        <label for="amount">Amount ($)</label>
+        <input id="amount" name="amount" type="number" min="0.01" step="0.01" required value="{{ values.amount }}">
+        {% if errors.amount %}<p class="field-error">{{ errors.amount }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="kind">Type</label>
+        <select id="kind" name="kind">
+          {% for k in kinds %}
+          <option value="{{ k }}" {{ 'selected' if values.kind == k else '' }}>{{ k.title() }}</option>
+          {% endfor %}
+        </select>
+        {% if errors.kind %}<p class="field-error">{{ errors.kind }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="method">Method</label>
+        <select id="method" name="method">
+          {% for m in methods %}
+          <option value="{{ m }}" {{ 'selected' if values.method == m else '' }}>{{ m.title() }}</option>
+          {% endfor %}
+        </select>
+        {% if errors.method %}<p class="field-error">{{ errors.method }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="created_on">Received on</label>
+        <input id="created_on" name="created_on" type="date" required value="{{ values.created_on }}">
+        {% if errors.created_on %}<p class="field-error">{{ errors.created_on }}</p>{% endif %}
+      </div>
+    </div>
+    <label for="receipt_no">Receipt number</label>
+    <input id="receipt_no" name="receipt_no" type="text" required value="{{ values.receipt_no }}">
+    {% if errors.receipt_no %}<p class="field-error">{{ errors.receipt_no }}</p>{% endif %}
+    <div class="form-actions">
+      <button type="submit" class="btn-primary btn-auto">Save and print receipt</button>
+      <a class="btn-secondary" href="{{ url_for('payment_list') }}">Cancel</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

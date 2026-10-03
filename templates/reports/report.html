@@ -1,0 +1,122 @@
+{% extends "app.html" %}
+{% block title %}Month-end report - TripDesk{% endblock %}
+{% block content %}
+<header class="page-head row">
+  <div>
+    <h1>Month-end report</h1>
+    <p class="muted">{{ label }}{% if reviewed %} · <span class="pill pill-confirmed">Reviewed</span>{% endif %}</p>
+  </div>
+  <button type="button" class="btn-secondary" onclick="window.print()">Print summary</button>
+</header>
+
+<section class="card no-print">
+  <form class="toolbar" method="get" action="{{ url_for('report') }}">
+    <label class="visually-hidden" for="month">Month</label>
+    <input id="month" name="month" type="month" required value="{{ month }}">
+    {% if can_filter %}
+    <label class="visually-hidden" for="branch">Branch</label>
+    <select id="branch" name="branch">
+      <option value="">All branches</option>
+      {% for b in branches %}
+      <option value="{{ b.id }}" {{ 'selected' if active_branch == b.id|string else '' }}>{{ b.name }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    <button type="submit" class="btn-secondary">Run report</button>
+  </form>
+</section>
+
+<section class="cards" aria-label="Month totals">
+  <div class="card stat">
+    <div class="stat-label">Revenue</div>
+    <div class="stat-value">${{ "{:,.2f}".format(totals.revenue) }}</div>
+  </div>
+  <div class="card stat">
+    <div class="stat-label">Commissions ({{ rate }}%)</div>
+    <div class="stat-value">${{ "{:,.2f}".format(totals.commission) }}</div>
+  </div>
+  <div class="card stat">
+    <div class="stat-label">Outstanding balances</div>
+    <div class="stat-value">${{ "{:,.2f}".format(totals.outstanding) }}</div>
+  </div>
+</section>
+
+<section class="card" aria-label="Revenue by branch">
+  <h2>Revenue by branch</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Branch</th><th scope="col">Payments</th><th scope="col">Collected</th><th scope="col">Refunds</th><th scope="col">Revenue</th></tr></thead>
+    <tbody>
+    {% for r in revenue %}
+      <tr>
+        <td>{{ r.name }}</td>
+        <td>{{ r.payment_count }}</td>
+        <td>${{ "{:,.2f}".format(r.collected) }}</td>
+        <td>${{ "{:,.2f}".format(r.refunds) }}</td>
+        <td class="amount">${{ "{:,.2f}".format(r.revenue) }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5">No branches to show.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="card" aria-label="Commissions by agent">
+  <h2>Commissions by agent</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Agent</th><th scope="col">Branch</th><th scope="col">Revenue</th><th scope="col">Commission</th></tr></thead>
+    <tbody>
+    {% for c in commissions %}
+      <tr>
+        <td>{{ c.name }}</td>
+        <td>{{ c.branch_name }}</td>
+        <td>${{ "{:,.2f}".format(c.revenue) }}</td>
+        <td class="amount">${{ "{:,.2f}".format(c.commission) }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4">No agents to show.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<div class="grid-2">
+  <section class="card" aria-label="Outstanding balances">
+    <h2>Outstanding balances</h2>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Branch</th><th scope="col">Outstanding</th></tr></thead>
+      <tbody>
+      {% for o in outstanding %}
+        <tr>
+          <td>{{ o.name }}</td>
+          <td class="amount">${{ "{:,.2f}".format(o.amount) }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="2">Nothing outstanding.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </section>
+  <section class="card no-print" aria-label="Month review">
+    <h2>Month review</h2>
+    {% if reviewed %}
+    <p class="muted">This month is locked as reviewed.</p>
+    {% elif user.role == 'owner' %}
+    <p class="muted">Check the figures above, then lock the month.</p>
+    <form method="post" action="{{ url_for('report_review') }}">
+      <input type="hidden" name="month" value="{{ month }}">
+      {% if active_branch %}<input type="hidden" name="branch" value="{{ active_branch }}">{% endif %}
+      <button type="submit" class="btn-primary btn-auto">Lock month as reviewed</button>
+    </form>
+    {% else %}
+    <p class="muted">Only the owner can lock the month as reviewed.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
