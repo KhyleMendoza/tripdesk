@@ -23,7 +23,7 @@
       </div>
       <div>
         <label for="phone">Phone</label>
-        <input id="phone" name="phone" type="tel" required value="{{ values.phone }}">
+        <input id="phone" name="phone" type="tel" required placeholder="(512) 555-0142" pattern="\(\d{3}\) \d{3}-\d{4}" value="{{ values.phone }}">
         {% if errors.phone %}<p class="field-error">{{ errors.phone }}</p>{% endif %}
       </div>
       <div>

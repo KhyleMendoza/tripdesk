@@ -1,4 +1,6 @@
 import os
+import re
+import secrets
 import sqlite3
 from datetime import date, timedelta
 from functools import wraps
@@ -34,6 +36,8 @@ REMINDER_CHANNELS = ("sms", "email")
 REMINDER_STATUSES = ("ready", "sent")
 COMMISSION_RATE = 0.05
 PASSPORT_SOON_DAYS = 90
+PHONE_PATTERN = re.compile(r"^\(\d{3}\) \d{3}-\d{4}$")
+PHONE_HINT = "Use the (512) 555-0142 format."
 
 
 def build_nav(role, active):
@@ -162,6 +166,8 @@ def read_client_form(form, db, user):
         errors["email"] = "Enter a valid email."
     if not values["phone"]:
         errors["phone"] = "Enter a phone number."
+    elif not PHONE_PATTERN.match(values["phone"]):
+        errors["phone"] = PHONE_HINT
     if not values["address"]:
         errors["address"] = "Enter an address."
     if values["passport_expiry"] and parse_iso_day(values["passport_expiry"]) is None:
@@ -290,7 +296,12 @@ def validate_item_form(values, suppliers):
 
 def create_app(test_db=None):
     app = Flask(__name__)
-    app.secret_key = os.environ.get("SECRET_KEY", "tripdesk-dev-key")
+    secret = os.environ.get("SECRET_KEY")
+    if secret:
+        app.secret_key = secret
+    else:
+        app.secret_key = secrets.token_hex(32)
+        app.logger.warning("SECRET_KEY is not set; using a random key for this run.")
     app.config["DB_PATH"] = test_db or os.environ.get(DB_ENV, DEFAULT_DB)
 
     with app.app_context():
@@ -586,13 +597,14 @@ def create_app(test_db=None):
         clients = scoped_trip_clients(db, branch_ids)
         staff = scoped_trip_staff(db, branch_ids)
         preset_client = request.args.get("client_id", "")
+        week = (date.today() + timedelta(days=7)).isoformat()
         values = {
             "title": "",
             "client_id": preset_client,
             "branch_id": str(branch_ids[0]) if branch_ids else "",
             "agent_id": str(g.user["id"]),
             "departure_date": date.today().isoformat(),
-            "return_date": date.today().isoformat(),
+            "return_date": week,
         }
         errors = {}
         if request.method == "POST":
@@ -621,6 +633,12 @@ def create_app(test_db=None):
                 )
                 db.commit()
                 return redirect(url_for("trip_detail", trip_id=cur.lastrowid))
+        branch_names = {str(b["id"]): b["name"] for b in g.branches}
+        context = {
+            "branch": branch_names.get(values["branch_id"], "All branches"),
+            "clients": len(clients),
+            "staff": len(staff),
+        }
         return render_template(
             "trips/form.html",
             user=g.user,
@@ -632,6 +650,7 @@ def create_app(test_db=None):
             branches=g.branches,
             can_pick_branch=g.user["role"] == ROLE_OWNER,
             can_pick_agent=g.user["role"] in (ROLE_OWNER, ROLE_MANAGER),
+            context=context,
         )
 
     @app.route("/trips/<int:trip_id>")
@@ -885,7 +904,6 @@ def create_app(test_db=None):
             can_filter=g.user["role"] == ROLE_OWNER,
             collected=collected,
             refunded=refunded,
-            net=round(collected - refunded, 2),
         )
 
     @app.route("/payments/new", methods=["GET", "POST"])
