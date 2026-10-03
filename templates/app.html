@@ -20,6 +20,14 @@
       <form method="post" action="{{ url_for('logout') }}"><button type="submit" class="btn-outline">Sign out</button></form>
     </div>
   </aside>
-  <main class="content">{% block content %}{% endblock %}</main>
+  <main class="content">
+  {% with messages = get_flashed_messages() %}
+  {% if messages %}
+  {% for message in messages %}
+  <div class="notice" role="status">{{ message }}</div>
+  {% endfor %}
+  {% endif %}
+  {% endwith %}
+  {% block content %}{% endblock %}</main>
 </div>
 {% endblock %}

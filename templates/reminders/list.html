@@ -6,7 +6,13 @@
     <h1>Reminder outbox</h1>
     <p class="muted">{{ ready_count }} ready · {{ sent_count }} sent</p>
   </div>
-  <form method="post" action="{{ url_for('reminder_generate') }}">
+  <form class="compose" method="post" action="{{ url_for('reminder_generate') }}">
+    <label class="visually-hidden" for="compose-channel">Channel</label>
+    <select id="compose-channel" name="channel">
+      <option value="sms">SMS</option>
+      <option value="email">Email</option>
+      <option value="both">SMS + email</option>
+    </select>
     <button type="submit" class="btn-primary btn-auto">Compose reminders</button>
   </form>
 </header>

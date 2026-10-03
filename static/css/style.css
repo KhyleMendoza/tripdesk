@@ -83,6 +83,13 @@ input:focus { outline: 2px solid var(--coral); outline-offset: 0; border-color: 
   border-radius: 8px; padding: 10px 12px; margin: 12px 0; font-size: 14px;
 }
 
+.notice {
+  background: #e2f2e7; color: #145c32; border: 1px solid #a9d4b8;
+  border-radius: 8px; padding: 10px 12px; margin: 0 0 14px; font-size: 14px; font-weight: 600;
+}
+
+.compose { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
 .shell { display: flex; min-height: 100vh; }
 .sidebar {
   width: 232px; flex-shrink: 0; background: var(--navy); color: #e8ecf5;
