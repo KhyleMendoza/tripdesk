@@ -3,7 +3,7 @@ import sqlite3
 from datetime import date, timedelta
 from functools import wraps
 
-from flask import Flask, abort, g, redirect, render_template, request, session, url_for
+from flask import Flask, abort, flash, g, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
 APP_NAME = "TripDesk"
@@ -861,7 +861,7 @@ def create_app(test_db=None):
         payments = []
         for row in rows:
             item = dict(row)
-            item["balance_after"] = round(row["total_price"] - running.get(row["id"], 0), 2)
+            item["balance_after"] = round(running.get(row["id"], row["total_price"]), 2)
             payments.append(item)
         collected = round(sum(p["amount"] for p in payments if p["kind"] != "refund"), 2)
         refunded = round(sum(p["amount"] for p in payments if p["kind"] == "refund"), 2)
@@ -1025,8 +1025,19 @@ def create_app(test_db=None):
     @require_page("reminders")
     def reminder_generate():
         db = get_db()
-        created = build_reminder_drafts(db, visible_branch_ids(g.user))
+        selected = request.form.get("channel", "sms")
+        if selected == "both":
+            wanted = ("sms", "email")
+        elif selected in REMINDER_CHANNELS:
+            wanted = (selected,)
+        else:
+            wanted = ("sms",)
+        created = build_reminder_drafts(db, visible_branch_ids(g.user), wanted)
         log_action(db, g.user["id"], "generate", "reminders", created)
+        if created == 1:
+            flash("Composed 1 reminder")
+        else:
+            flash("Composed " + str(created) + " reminders")
         return redirect(url_for("reminder_list"))
 
     @app.route("/reminders/<int:reminder_id>/sent", methods=["POST"])
@@ -1132,6 +1143,9 @@ def create_app(test_db=None):
                 (g.user["id"], "month-reviewed", entity, None, date.today().isoformat()),
             )
             db.commit()
+            flash("Month locked as reviewed")
+        else:
+            flash("Month already locked as reviewed")
         target = url_for("report", month=month)
         if branch_param.isdigit():
             target += "&branch=" + branch_param
@@ -1352,7 +1366,12 @@ def deposit_message(client_name, trip_title, balance, departure_date, branch_nam
 
 
 def departure_message(client_name, trip_title, departure_date, days_left):
-    day_word = "tomorrow" if days_left == 1 else "in " + str(days_left) + " days"
+    if days_left <= 0:
+        day_word = "today"
+    elif days_left == 1:
+        day_word = "tomorrow"
+    else:
+        day_word = "in " + str(days_left) + " days"
     return (
         "Hello "
         + client_name
@@ -1377,9 +1396,10 @@ def passport_message(client_name, expiry, days_left):
     )
 
 
-def build_reminder_drafts(db, branch_ids):
+def build_reminder_drafts(db, branch_ids, channels=("sms",)):
     today = date.today()
     created = 0
+    wanted = [c for c in channels if c in REMINDER_CHANNELS] or ["sms"]
     extra, params = branch_filter(branch_ids, column="t.branch_id")
     unpaid = db.execute(
         "SELECT t.id AS trip_id, t.title, t.departure_date, t.total_price, c.id AS client_id,"
@@ -1394,27 +1414,29 @@ def build_reminder_drafts(db, branch_ids):
         balance = round(row["total_price"] - (row["paid"] or 0), 2)
         if balance <= 0.50:
             continue
-        exists = db.execute(
-            "SELECT id FROM reminders WHERE trip_id = ? AND kind = 'deposit' AND status = 'ready'",
-            (row["trip_id"],),
-        ).fetchone()
-        if exists is None:
-            db.execute(
-                "INSERT INTO reminders (trip_id, client_id, kind, channel, message, status, due_date)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    row["trip_id"],
-                    row["client_id"],
-                    "deposit",
-                    "sms",
-                    deposit_message(
-                        row["client_name"], row["title"], balance, row["departure_date"], row["branch_name"]
+        for channel_name in wanted:
+            exists = db.execute(
+                "SELECT id FROM reminders WHERE trip_id = ? AND kind = 'deposit'"
+                " AND channel = ? AND status = 'ready'",
+                (row["trip_id"], channel_name),
+            ).fetchone()
+            if exists is None:
+                db.execute(
+                    "INSERT INTO reminders (trip_id, client_id, kind, channel, message, status, due_date)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        row["trip_id"],
+                        row["client_id"],
+                        "deposit",
+                        channel_name,
+                        deposit_message(
+                            row["client_name"], row["title"], balance, row["departure_date"], row["branch_name"]
+                        ),
+                        "ready",
+                        today.isoformat(),
                     ),
-                    "ready",
-                    today.isoformat(),
-                ),
-            )
-            created += 1
+                )
+                created += 1
     soon = db.execute(
         "SELECT t.id AS trip_id, t.title, t.departure_date, c.id AS client_id, c.full_name AS client_name"
         " FROM trips t JOIN clients c ON c.id = t.client_id"
@@ -1426,25 +1448,27 @@ def build_reminder_drafts(db, branch_ids):
         if dep is None:
             continue
         days_left = (dep - today).days
-        exists = db.execute(
-            "SELECT id FROM reminders WHERE trip_id = ? AND kind = 'departure' AND status = 'ready'",
-            (row["trip_id"],),
-        ).fetchone()
-        if exists is None:
-            db.execute(
-                "INSERT INTO reminders (trip_id, client_id, kind, channel, message, status, due_date)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    row["trip_id"],
-                    row["client_id"],
-                    "departure",
-                    "sms",
-                    departure_message(row["client_name"], row["title"], row["departure_date"], days_left),
-                    "ready",
-                    row["departure_date"],
-                ),
-            )
-            created += 1
+        for channel_name in wanted:
+            exists = db.execute(
+                "SELECT id FROM reminders WHERE trip_id = ? AND kind = 'departure'"
+                " AND channel = ? AND status = 'ready'",
+                (row["trip_id"], channel_name),
+            ).fetchone()
+            if exists is None:
+                db.execute(
+                    "INSERT INTO reminders (trip_id, client_id, kind, channel, message, status, due_date)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        row["trip_id"],
+                        row["client_id"],
+                        "departure",
+                        channel_name,
+                        departure_message(row["client_name"], row["title"], row["departure_date"], days_left),
+                        "ready",
+                        row["departure_date"],
+                    ),
+                )
+                created += 1
     cextra, cparams = branch_filter(branch_ids, column="c.branch_id")
     clients = db.execute(
         "SELECT c.id, c.full_name, c.passport_expiry FROM clients c"
@@ -1458,25 +1482,27 @@ def build_reminder_drafts(db, branch_ids):
         days_left = (expiry - today).days
         if days_left > PASSPORT_SOON_DAYS:
             continue
-        exists = db.execute(
-            "SELECT id FROM reminders WHERE trip_id IS NULL AND client_id = ?"
-            " AND kind = 'passport' AND status = 'ready'",
-            (row["id"],),
-        ).fetchone()
-        if exists is None:
-            db.execute(
-                "INSERT INTO reminders (trip_id, client_id, kind, channel, message, status, due_date)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    None,
-                    row["id"],
-                    "passport",
-                    "sms",
-                    passport_message(row["full_name"], row["passport_expiry"], days_left),
-                    "ready",
-                    today.isoformat(),
-                ),
-            )
+        for channel_name in wanted:
+            exists = db.execute(
+                "SELECT id FROM reminders WHERE trip_id IS NULL AND client_id = ?"
+                " AND kind = 'passport' AND channel = ? AND status = 'ready'",
+                (row["id"], channel_name),
+            ).fetchone()
+            if exists is None:
+                db.execute(
+                    "INSERT INTO reminders (trip_id, client_id, kind, channel, message, status, due_date)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        None,
+                        row["id"],
+                        "passport",
+                        channel_name,
+                        passport_message(row["full_name"], row["passport_expiry"], days_left),
+                        "ready",
+                        today.isoformat(),
+                    ),
+                )
+                created += 1
             created += 1
     db.commit()
     return created
@@ -1783,10 +1809,16 @@ def seed(conn):
                 (trip_id, paid, "deposit", "card", f"R-{5100 + i}", iso(-6 if dep <= 0 else -2), user_ids["accountant@tripdesk.local"]),
             )
 
+    deposit_text = deposit_message(
+        "Hannah Whitfield", "Family beach getaway", 3650.00, iso(0), branches[0][0]
+    )
+    departure_text = departure_message("James Carter", "Lakeside retreat", iso(0), 0)
+    passport_expiry = (today + timedelta(days=30)).isoformat()
+    passport_text = passport_message("Hannah Whitfield", passport_expiry, 30)
     reminders = [
-        (1, client_ids[0], "deposit", "sms", "Balance due reminder", 5),
-        (3, client_ids[3], "departure", "email", "Departure in 2 days", 2),
-        (1, client_ids[0], "passport", "sms", "Passport expiring soon", 30),
+        (1, client_ids[0], "deposit", "sms", deposit_text, 5),
+        (3, client_ids[3], "departure", "email", departure_text, 2),
+        (None, client_ids[0], "passport", "sms", passport_text, 30),
     ]
     for trip_offset, client, kind, channel, text, due in reminders:
         conn.execute(
