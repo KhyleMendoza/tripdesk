@@ -4,7 +4,7 @@
 <header class="page-head row">
   <div>
     <h1>Payments</h1>
-    <p class="muted">${{ "{:,.2f}".format(net) }} net collected · ${{ "{:,.2f}".format(collected) }} in · ${{ "{:,.2f}".format(refunded) }} refunded{% if not can_filter and user.branch_name %} · {{ user.branch_name }}{% endif %}</p>
+    <p class="muted">${{ "{:,.2f}".format(collected) }} collected · ${{ "{:,.2f}".format(refunded) }} refunded{% if not can_filter and user.branch_name %} · {{ user.branch_name }}{% endif %}</p>
   </div>
   <a class="btn-primary btn-auto" href="{{ url_for('payment_new') }}">Record payment</a>
 </header>

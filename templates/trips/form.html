@@ -8,6 +8,7 @@
   </div>
 </header>
 
+<div class="grid-2">
 <section class="card form-card">
   <form method="post" action="{{ url_for('trip_new') }}" novalidate>
     <div class="form-grid">
@@ -67,4 +68,39 @@
     </div>
   </form>
 </section>
+<aside class="card" aria-label="Booking context">
+  <h2>Booking context</h2>
+  <dl class="kv">
+    <div><dt>Branch</dt><dd>{{ context.branch }}</dd></div>
+    <div><dt>Clients</dt><dd>{{ context.clients }} in scope</dd></div>
+    <div><dt>Staff</dt><dd>{{ context.staff }} bookable</dd></div>
+    <div><dt>Length</dt><dd id="trip-length">7 days</dd></div>
+  </dl>
+  <p class="muted small">Return defaults to departure plus 7 days. Itinerary items and deposits are added on the trip dossier.</p>
+</aside>
+</div>
+<script>
+(function () {
+  var dep = document.getElementById("departure_date");
+  var ret = document.getElementById("return_date");
+  var label = document.getElementById("trip-length");
+  function plusDays(iso, days) {
+    var parts = iso.split("-").map(Number);
+    var day = new Date(parts[0], parts[1] - 1, parts[2] + days);
+    function two(n) { return (n < 10 ? "0" : "") + n; }
+    return day.getFullYear() + "-" + two(day.getMonth() + 1) + "-" + two(day.getDate());
+  }
+  function refresh(defaultReturn) {
+    if (!dep.value) return;
+    if (defaultReturn && (!ret.value || ret.value < dep.value)) ret.value = plusDays(dep.value, 7);
+    if (label && dep.value && ret.value && ret.value >= dep.value) {
+      var nights = Math.round((new Date(ret.value) - new Date(dep.value)) / 86400000);
+      label.textContent = nights + (nights === 1 ? " day" : " days");
+    }
+  }
+  dep.addEventListener("change", function () { refresh(true); });
+  ret.addEventListener("change", function () { refresh(false); });
+  refresh(false);
+})();
+</script>
 {% endblock %}
