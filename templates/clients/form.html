@@ -1,0 +1,62 @@
+{% extends "app.html" %}
+{% block title %}{{ heading }} - TripDesk{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <p class="back"><a href="{{ url_for('client_list') }}">← Clients</a></p>
+    <h1>{{ heading }}</h1>
+  </div>
+</header>
+
+<section class="card form-card">
+  <form method="post" action="{{ action }}" novalidate>
+    <div class="form-grid">
+      <div>
+        <label for="full_name">Full name</label>
+        <input id="full_name" name="full_name" type="text" required value="{{ values.full_name }}">
+        {% if errors.full_name %}<p class="field-error">{{ errors.full_name }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required value="{{ values.email }}">
+        {% if errors.email %}<p class="field-error">{{ errors.email }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="phone">Phone</label>
+        <input id="phone" name="phone" type="tel" required value="{{ values.phone }}">
+        {% if errors.phone %}<p class="field-error">{{ errors.phone }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="address">Address</label>
+        <input id="address" name="address" type="text" required value="{{ values.address }}">
+        {% if errors.address %}<p class="field-error">{{ errors.address }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="passport_number">Passport number</label>
+        <input id="passport_number" name="passport_number" type="text" value="{{ values.passport_number }}">
+      </div>
+      <div>
+        <label for="passport_expiry">Passport expiry</label>
+        <input id="passport_expiry" name="passport_expiry" type="date" value="{{ values.passport_expiry }}">
+        {% if errors.passport_expiry %}<p class="field-error">{{ errors.passport_expiry }}</p>{% endif %}
+      </div>
+      {% if can_pick_branch %}
+      <div>
+        <label for="branch_id">Branch</label>
+        <select id="branch_id" name="branch_id">
+          <option value="">Choose a branch</option>
+          {% for b in branches %}
+          <option value="{{ b.id }}" {{ 'selected' if values.branch_id == b.id|string else '' }}>{{ b.name }}</option>
+          {% endfor %}
+        </select>
+        {% if errors.branch_id %}<p class="field-error">{{ errors.branch_id }}</p>{% endif %}
+      </div>
+      {% endif %}
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn-primary btn-auto">Save client</button>
+      <a class="btn-secondary" href="{{ url_for('client_list') }}">Cancel</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

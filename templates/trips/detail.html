@@ -1,0 +1,140 @@
+{% extends "app.html" %}
+{% block title %}{{ trip.title }} - TripDesk{% endblock %}
+{% block content %}
+<header class="page-head row">
+  <div>
+    <p class="back"><a href="{{ url_for('trip_list') }}">← Trips</a></p>
+    <h1>{{ trip.title }}</h1>
+    <p class="muted">{{ trip.client_name }} · {{ trip.branch_name }} · <span class="pill pill-{{ trip.status }}">{{ trip.status.title() }}</span></p>
+  </div>
+  {% if can_change_status %}
+  <form class="status-form" method="post" action="{{ url_for('trip_status', trip_id=trip.id) }}">
+    <label class="visually-hidden" for="status">Booking status</label>
+    <select id="status" name="status">
+      {% for s in statuses %}
+      <option value="{{ s }}" {{ 'selected' if trip.status == s else '' }}>{{ s.title() }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn-secondary">Update status</button>
+  </form>
+  {% endif %}
+</header>
+
+<div class="grid-2">
+  <section class="card" aria-label="Trip details">
+    <h2>Details</h2>
+    <dl class="kv">
+      <div><dt>Client</dt><dd><a href="{{ url_for('client_detail', client_id=trip.client_id) }}">{{ trip.client_name }}</a><br><span class="muted small">{{ trip.client_email }} · {{ trip.client_phone }}</span></dd></div>
+      <div><dt>Agent</dt><dd>{{ trip.agent_name if trip.agent_name else '—' }}</dd></div>
+      <div><dt>Departure</dt><dd>{{ trip.departure_date }}</dd></div>
+      <div><dt>Return</dt><dd>{{ trip.return_date }}</dd></div>
+      <div><dt>Quoted total</dt><dd>${{ "{:,.2f}".format(trip.total_price) }}</dd></div>
+      <div><dt>Items total</dt><dd>${{ "{:,.2f}".format(trip.items_total) }}</dd></div>
+      <div><dt>Paid</dt><dd>${{ "{:,.2f}".format(trip.paid) }}</dd></div>
+      <div><dt>Balance</dt><dd class="amount">${{ "{:,.2f}".format(trip.balance) }}</dd></div>
+      <div><dt>Passport</dt><dd><span class="pill pill-{{ trip.passport.tone }}">{{ trip.passport.label }}</span>{% if trip.passport_number %} <span class="muted small">{{ trip.passport_number }}</span>{% endif %}</dd></div>
+    </dl>
+  </section>
+  <section class="card" aria-label="Edit trip">
+    <h2>Edit details</h2>
+    <form method="post" action="{{ url_for('trip_edit', trip_id=trip.id) }}" novalidate>
+      <label for="title">Trip title</label>
+      <input id="title" name="title" type="text" required value="{{ edit_values.title if edit_values is defined else trip.title }}">
+      {% if edit_errors is defined and edit_errors.title %}<p class="field-error">{{ edit_errors.title }}</p>{% endif %}
+      <div class="form-grid">
+        <div>
+          <label for="departure_date">Departure</label>
+          <input id="departure_date" name="departure_date" type="date" required value="{{ edit_values.departure_date if edit_values is defined else trip.departure_date }}">
+          {% if edit_errors is defined and edit_errors.departure_date %}<p class="field-error">{{ edit_errors.departure_date }}</p>{% endif %}
+        </div>
+        <div>
+          <label for="return_date">Return</label>
+          <input id="return_date" name="return_date" type="date" required value="{{ edit_values.return_date if edit_values is defined else trip.return_date }}">
+          {% if edit_errors is defined and edit_errors.return_date %}<p class="field-error">{{ edit_errors.return_date }}</p>{% endif %}
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn-secondary">Save changes</button>
+      </div>
+    </form>
+  </section>
+</div>
+
+<section class="card" aria-label="Itinerary">
+  <h2>Itinerary ({{ items|length }})</h2>
+  {% if items %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Item</th><th scope="col">Date</th><th scope="col">Supplier</th><th scope="col">Voucher</th><th scope="col">Price</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+    <tbody>
+    {% for i in items %}
+      <tr>
+        <td><span class="pill pill-{{ i.kind if i.kind in ['flight', 'hotel', 'tour'] else 'completed' }}">{{ i.kind.title() }}</span> {{ i.title }}</td>
+        <td>{{ i.item_date }}</td>
+        <td>{% if i.supplier_name %}{{ i.supplier_name }}<br><span class="muted small">{{ i.supplier_kind }}{% if i.supplier_phone %} · {{ i.supplier_phone }}{% endif %}</span>{% else %}—{% endif %}</td>
+        <td>{{ i.voucher if i.voucher else '—' }}</td>
+        <td class="amount">${{ "{:,.2f}".format(i.price) }}</td>
+        <td>
+          <form method="post" action="{{ url_for('trip_item_delete', trip_id=trip.id, item_id=i.id) }}" onsubmit="return confirm('Remove this item?');">
+            <button type="submit" class="btn-danger">Remove</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="muted">No itinerary items yet. Add the flight, stay, and activities below.</p>
+  {% endif %}
+</section>
+
+<section class="card" aria-label="Add itinerary item">
+  <h2>Add item</h2>
+  <form method="post" action="{{ url_for('trip_item_add', trip_id=trip.id) }}" novalidate>
+    <div class="form-grid">
+      <div>
+        <label for="kind">Type</label>
+        <select id="kind" name="kind">
+          {% for k in kinds %}
+          <option value="{{ k }}" {{ 'selected' if item_values is defined and item_values.kind == k else '' }}>{{ k.title() }}</option>
+          {% endfor %}
+        </select>
+        {% if item_errors is defined and item_errors.kind %}<p class="field-error">{{ item_errors.kind }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="item_title">Title</label>
+        <input id="item_title" name="title" type="text" required placeholder="Flight, Harborview stay, guided tour" value="{{ item_values.title if item_values is defined else '' }}">
+        {% if item_errors is defined and item_errors.title %}<p class="field-error">{{ item_errors.title }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="item_date">Date</label>
+        <input id="item_date" name="item_date" type="date" required value="{{ item_values.item_date if item_values is defined else trip.departure_date }}">
+        {% if item_errors is defined and item_errors.item_date %}<p class="field-error">{{ item_errors.item_date }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="price">Price ($)</label>
+        <input id="price" name="price" type="number" min="0" step="0.01" required value="{{ item_values.price if item_values is defined else '' }}">
+        {% if item_errors is defined and item_errors.price %}<p class="field-error">{{ item_errors.price }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="supplier_id">Supplier</label>
+        <select id="supplier_id" name="supplier_id">
+          <option value="">No supplier</option>
+          {% for s in suppliers %}
+          <option value="{{ s.id }}" {{ 'selected' if item_values is defined and item_values.supplier_id == s.id|string else '' }}>{{ s.name }} · {{ s.kind }}</option>
+          {% endfor %}
+        </select>
+        {% if item_errors is defined and item_errors.supplier_id %}<p class="field-error">{{ item_errors.supplier_id }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="voucher">Voucher</label>
+        <input id="voucher" name="voucher" type="text" value="{{ item_values.voucher if item_values is defined else '' }}">
+      </div>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn-primary btn-auto">Add item</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

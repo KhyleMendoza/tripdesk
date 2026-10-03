@@ -1,0 +1,46 @@
+{% extends "app.html" %}
+{% block title %}Clients - TripDesk{% endblock %}
+{% block content %}
+<header class="page-head row">
+  <div>
+    <h1>Clients</h1>
+    <p class="muted">{{ clients|length }} client{{ 's' if clients|length != 1 else '' }}{% if not can_filter and user.branch_name %} · {{ user.branch_name }}{% endif %}</p>
+  </div>
+  <a class="btn-primary btn-auto" href="{{ url_for('client_new') }}">New client</a>
+</header>
+
+<section class="card">
+  <form class="toolbar" method="get" action="{{ url_for('client_list') }}">
+    <label class="visually-hidden" for="q">Search clients</label>
+    <input id="q" name="q" type="search" placeholder="Search name, email or phone" value="{{ q }}">
+    {% if can_filter %}
+    <label class="visually-hidden" for="branch">Branch</label>
+    <select id="branch" name="branch">
+      <option value="">All branches</option>
+      {% for b in branches %}
+      <option value="{{ b.id }}" {{ 'selected' if active_branch == b.id|string else '' }}>{{ b.name }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    <button type="submit" class="btn-secondary">Search</button>
+  </form>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Client</th><th scope="col">Contact</th><th scope="col">Passport</th><th scope="col">Trips</th>{% if can_filter %}<th scope="col">Branch</th>{% endif %}</tr></thead>
+    <tbody>
+    {% for c in clients %}
+      <tr>
+        <td><a href="{{ url_for('client_detail', client_id=c.id) }}">{{ c.full_name }}</a></td>
+        <td>{{ c.email }}<br><span class="muted small">{{ c.phone }}</span></td>
+        <td><span class="pill pill-{{ c.passport.tone }}">{{ c.passport.label }}</span></td>
+        <td>{{ c.trip_count }}</td>
+        {% if can_filter %}<td>{{ c.branch_name }}</td>{% endif %}
+      </tr>
+    {% else %}
+      <tr><td colspan="5">No clients found. <a href="{{ url_for('client_new') }}">Add the first client</a>.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endblock %}

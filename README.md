@@ -31,3 +31,17 @@ All demo passwords are `Passw0rd!`.
 | Accountant | accountant@tripdesk.local |
 
 The owner sees all branches. Managers, agents, and accountants only see their own branch.
+
+## What staff can do
+
+- Dashboard: today's departures, unpaid balances, and per-branch stats.
+- Clients: searchable client list with passport status flags, profiles with contact details and passport info, and full trip history with balances.
+- Trips: searchable trip list filtered by status and branch, trip dossiers with dates, booking status, supplier details and vouchers, plus itinerary items staff can add or remove. Owners and branch managers update booking status.
+- Sign-in is required for every staff page. The accountant role cannot open clients or trips.
+
+![Sign in](docs/screenshots/01-login.png)
+![Dashboard](docs/screenshots/02-dashboard.png)
+![Clients](docs/screenshots/03-clients.png)
+![Client profile](docs/screenshots/04-client-detail.png)
+![Trips](docs/screenshots/05-trips.png)
+![Trip dossier](docs/screenshots/06-trip-detail.png)

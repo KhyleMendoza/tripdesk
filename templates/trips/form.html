@@ -1,0 +1,70 @@
+{% extends "app.html" %}
+{% block title %}New trip - TripDesk{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <p class="back"><a href="{{ url_for('trip_list') }}">← Trips</a></p>
+    <h1>New trip</h1>
+  </div>
+</header>
+
+<section class="card form-card">
+  <form method="post" action="{{ url_for('trip_new') }}" novalidate>
+    <div class="form-grid">
+      <div>
+        <label for="title">Trip title</label>
+        <input id="title" name="title" type="text" required value="{{ values.title }}">
+        {% if errors.title %}<p class="field-error">{{ errors.title }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="client_id">Client</label>
+        <select id="client_id" name="client_id">
+          <option value="">Choose a client</option>
+          {% for c in clients %}
+          <option value="{{ c.id }}" {{ 'selected' if values.client_id == c.id|string else '' }}>{{ c.full_name }} · {{ c.branch_name }}</option>
+          {% endfor %}
+        </select>
+        {% if errors.client_id %}<p class="field-error">{{ errors.client_id }}</p>{% endif %}
+      </div>
+      {% if can_pick_branch %}
+      <div>
+        <label for="branch_id">Branch</label>
+        <select id="branch_id" name="branch_id">
+          <option value="">Choose a branch</option>
+          {% for b in branches %}
+          <option value="{{ b.id }}" {{ 'selected' if values.branch_id == b.id|string else '' }}>{{ b.name }}</option>
+          {% endfor %}
+        </select>
+        {% if errors.branch_id %}<p class="field-error">{{ errors.branch_id }}</p>{% endif %}
+      </div>
+      {% endif %}
+      {% if can_pick_agent %}
+      <div>
+        <label for="agent_id">Agent</label>
+        <select id="agent_id" name="agent_id">
+          <option value="">Choose an agent</option>
+          {% for s in staff %}
+          <option value="{{ s.id }}" {{ 'selected' if values.agent_id == s.id|string else '' }}>{{ s.name }}{% if s.branch_name %} · {{ s.branch_name }}{% endif %}</option>
+          {% endfor %}
+        </select>
+        {% if errors.agent_id %}<p class="field-error">{{ errors.agent_id }}</p>{% endif %}
+      </div>
+      {% endif %}
+      <div>
+        <label for="departure_date">Departure</label>
+        <input id="departure_date" name="departure_date" type="date" required value="{{ values.departure_date }}">
+        {% if errors.departure_date %}<p class="field-error">{{ errors.departure_date }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="return_date">Return</label>
+        <input id="return_date" name="return_date" type="date" required value="{{ values.return_date }}">
+        {% if errors.return_date %}<p class="field-error">{{ errors.return_date }}</p>{% endif %}
+      </div>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn-primary btn-auto">Create trip</button>
+      <a class="btn-secondary" href="{{ url_for('trip_list') }}">Cancel</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,57 @@
+{% extends "app.html" %}
+{% block title %}{{ client.full_name }} - TripDesk{% endblock %}
+{% block content %}
+<header class="page-head row">
+  <div>
+    <p class="back"><a href="{{ url_for('client_list') }}">← Clients</a></p>
+    <h1>{{ client.full_name }}</h1>
+    <p class="muted">{{ client.branch_name }}</p>
+  </div>
+  <a class="btn-secondary" href="{{ url_for('client_edit', client_id=client.id) }}">Edit client</a>
+</header>
+
+<div class="grid-2">
+  <section class="card" aria-label="Contact details">
+    <h2>Contact</h2>
+    <dl class="kv">
+      <div><dt>Email</dt><dd>{{ client.email }}</dd></div>
+      <div><dt>Phone</dt><dd>{{ client.phone }}</dd></div>
+      <div><dt>Address</dt><dd>{{ client.address }}</dd></div>
+    </dl>
+  </section>
+  <section class="card" aria-label="Passport">
+    <h2>Passport</h2>
+    <dl class="kv">
+      <div><dt>Number</dt><dd>{{ client.passport_number if client.passport_number else '—' }}</dd></div>
+      <div><dt>Status</dt><dd><span class="pill pill-{{ client.passport.tone }}">{{ client.passport.label }}</span></dd></div>
+    </dl>
+  </section>
+</div>
+
+<section class="card" aria-label="Trip history">
+  <div class="row">
+    <h2>Trips ({{ trips|length }})</h2>
+    <a class="btn-primary btn-auto" href="{{ url_for('trip_new', client_id=client.id) }}">New trip</a>
+  </div>
+  {% if trips %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Trip</th><th scope="col">Dates</th><th scope="col">Status</th><th scope="col">Total</th><th scope="col">Balance</th></tr></thead>
+    <tbody>
+    {% for t in trips %}
+      <tr>
+        <td><a href="{{ url_for('trip_detail', trip_id=t.id) }}">{{ t.title }}</a></td>
+        <td>{{ t.departure_date }} → {{ t.return_date }}</td>
+        <td><span class="pill pill-{{ t.status }}">{{ t.status.title() }}</span></td>
+        <td>${{ "{:,.2f}".format(t.total_price) }}</td>
+        <td class="amount">${{ "{:,.2f}".format(t.balance) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="muted">No trips yet for this client.</p>
+  {% endif %}
+</section>
+{% endblock %}

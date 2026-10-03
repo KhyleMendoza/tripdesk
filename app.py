@@ -3,7 +3,7 @@ import sqlite3
 from datetime import date, timedelta
 from functools import wraps
 
-from flask import Flask, g, redirect, render_template, request, session, url_for
+from flask import Flask, abort, g, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
 APP_NAME = "TripDesk"
@@ -28,6 +28,226 @@ PAGE_RULES = {
 NAV_ITEMS = [
     ("dashboard", "Dashboard", "M3 12l9-9 9 9M5 10v10h5v-6h4v6h5V10", "/"),
 ]
+
+TRIP_STATUSES = ("pending", "confirmed", "completed", "cancelled")
+ITEM_KINDS = ("flight", "hotel", "tour", "transfer", "other")
+PASSPORT_SOON_DAYS = 90
+
+
+def build_nav(role, active):
+    entries = [("dashboard", "Dashboard", "/", "M3 12l9-9 9 9M5 10v10h5v-6h4v6h5V10")]
+    if page_allowed(role, "clients"):
+        entries.append(
+            (
+                "clients",
+                "Clients",
+                "/clients",
+                "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75",
+            )
+        )
+    if page_allowed(role, "trips"):
+        entries.append(("trips", "Trips", "/trips", "M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"))
+    return [
+        {"key": key, "label": label, "url": url, "icon": icon, "current": key == active}
+        for key, label, url, icon in entries
+    ]
+
+
+def parse_iso_day(value):
+    try:
+        return date.fromisoformat((value or "").strip())
+    except ValueError:
+        return None
+
+
+def passport_info(expiry):
+    day = parse_iso_day(expiry)
+    if day is None:
+        return {"label": "No passport on file", "tone": "missing", "days": None}
+    delta = (day - date.today()).days
+    if delta < 0:
+        return {"label": "Expired " + day.isoformat(), "tone": "expired", "days": delta}
+    if delta <= PASSPORT_SOON_DAYS:
+        return {
+            "label": "Expires " + day.isoformat() + " (" + str(delta) + " days)",
+            "tone": "soon",
+            "days": delta,
+        }
+    return {"label": "Valid to " + day.isoformat(), "tone": "ok", "days": delta}
+
+
+def trip_money(db, trip_id, total_price):
+    row = db.execute(
+        "SELECT COALESCE(SUM(CASE WHEN kind = 'refund' THEN -amount ELSE amount END), 0) AS paid"
+        " FROM payments WHERE trip_id = ?",
+        (trip_id,),
+    ).fetchone()
+    paid = round(row["paid"] or 0, 2)
+    return {"paid": paid, "balance": round((total_price or 0) - paid, 2)}
+
+
+def log_action(db, user_id, action, entity, entity_id):
+    db.execute(
+        "INSERT INTO audit_log (user_id, action, entity, entity_id, created_at)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (user_id, action, entity, entity_id, date.today().isoformat()),
+    )
+    db.commit()
+
+
+def blank_client_values(user):
+    return {
+        "full_name": "",
+        "email": "",
+        "phone": "",
+        "address": "",
+        "passport_number": "",
+        "passport_expiry": "",
+        "branch_id": "" if user["role"] == ROLE_OWNER else str(user["branch_id"] or ""),
+    }
+
+
+def read_client_form(form, db, user):
+    values = {
+        "full_name": form.get("full_name", "").strip(),
+        "email": form.get("email", "").strip(),
+        "phone": form.get("phone", "").strip(),
+        "address": form.get("address", "").strip(),
+        "passport_number": form.get("passport_number", "").strip(),
+        "passport_expiry": form.get("passport_expiry", "").strip(),
+        "branch_id": form.get("branch_id", ""),
+    }
+    errors = {}
+    if not values["full_name"]:
+        errors["full_name"] = "Enter the client name."
+    if "@" not in values["email"]:
+        errors["email"] = "Enter a valid email."
+    if not values["phone"]:
+        errors["phone"] = "Enter a phone number."
+    if not values["address"]:
+        errors["address"] = "Enter an address."
+    if values["passport_expiry"] and parse_iso_day(values["passport_expiry"]) is None:
+        errors["passport_expiry"] = "Use YYYY-MM-DD."
+    if user["role"] == ROLE_OWNER:
+        branch = db.execute("SELECT id FROM branches WHERE id = ?", (values["branch_id"],)).fetchone()
+        if branch is None:
+            errors["branch_id"] = "Choose a branch."
+    else:
+        values["branch_id"] = user["branch_id"]
+        if not values["branch_id"]:
+            errors["branch_id"] = "Your account has no branch."
+    return values, errors
+
+
+def scoped_client(db, user, client_id):
+    branch_ids = visible_branch_ids(user)
+    extra, params = branch_filter(branch_ids, column="c.branch_id")
+    return db.execute(
+        "SELECT c.*, b.name AS branch_name FROM clients c"
+        " JOIN branches b ON b.id = c.branch_id"
+        f" WHERE c.id = ?{extra}",
+        [client_id, *params],
+    ).fetchone()
+
+
+def scoped_trip(db, user, trip_id):
+    branch_ids = visible_branch_ids(user)
+    extra, params = branch_filter(branch_ids)
+    return db.execute(
+        "SELECT t.*, c.full_name AS client_name, c.email AS client_email,"
+        " c.phone AS client_phone, c.passport_number, c.passport_expiry,"
+        " b.name AS branch_name, u.name AS agent_name FROM trips t"
+        " JOIN clients c ON c.id = t.client_id"
+        " JOIN branches b ON b.id = t.branch_id"
+        " LEFT JOIN users u ON u.id = t.agent_id"
+        f" WHERE t.id = ?{extra}",
+        [trip_id, *params],
+    ).fetchone()
+
+
+def scoped_trip_clients(db, branch_ids):
+    extra, params = branch_filter(branch_ids, column="c.branch_id")
+    return db.execute(
+        "SELECT c.*, b.name AS branch_name FROM clients c"
+        " JOIN branches b ON b.id = c.branch_id"
+        f" WHERE 1 = 1{extra} ORDER BY c.full_name",
+        params,
+    ).fetchall()
+
+
+def scoped_trip_staff(db, branch_ids):
+    extra, params = branch_filter(branch_ids, column="u.branch_id")
+    return db.execute(
+        "SELECT u.*, b.name AS branch_name FROM users u"
+        " LEFT JOIN branches b ON b.id = u.branch_id"
+        f" WHERE u.role IN ('agent', 'branch_manager'){extra} ORDER BY u.name",
+        params,
+    ).fetchall()
+
+
+def validate_trip_dates(departure, return_day):
+    errors = {}
+    dep = parse_iso_day(departure)
+    ret = parse_iso_day(return_day)
+    if dep is None:
+        errors["departure_date"] = "Enter a valid departure date."
+    if ret is None:
+        errors["return_date"] = "Enter a valid return date."
+    if dep and ret and ret < dep:
+        errors["return_date"] = "Return must be on or after departure."
+    return errors
+
+
+def validate_trip_form(values, clients, staff, user, branch_ids):
+    errors = {}
+    if not values["title"]:
+        errors["title"] = "Enter a trip title."
+    client_ids = {str(c["id"]): c for c in clients}
+    client = client_ids.get(values["client_id"])
+    if client is None:
+        errors["client_id"] = "Choose a client."
+    if user["role"] == ROLE_OWNER:
+        if not values["branch_id"].isdigit():
+            errors["branch_id"] = "Choose a branch."
+    else:
+        values["branch_id"] = str(user["branch_id"] or "")
+        if branch_ids is not None and values["branch_id"] not in [str(b) for b in branch_ids]:
+            errors["branch_id"] = "Choose your branch."
+    if client is not None and not errors.get("branch_id"):
+        if str(client["branch_id"]) != str(values["branch_id"]):
+            errors["client_id"] = "Client belongs to another branch."
+    if user["role"] == ROLE_AGENT:
+        values["agent_id"] = str(user["id"])
+    else:
+        staff_ids = {str(s["id"]): s for s in staff}
+        agent = staff_ids.get(values["agent_id"])
+        if agent is None:
+            errors["agent_id"] = "Choose an agent."
+        elif user["role"] != ROLE_OWNER and str(agent["branch_id"]) != str(values["branch_id"]):
+            errors["agent_id"] = "Agent belongs to another branch."
+    errors.update(validate_trip_dates(values["departure_date"], values["return_date"]))
+    return errors
+
+
+def validate_item_form(values, suppliers):
+    errors = {}
+    if values["kind"] not in ITEM_KINDS:
+        errors["kind"] = "Choose a type."
+    if not values["title"]:
+        errors["title"] = "Enter a title."
+    if parse_iso_day(values["item_date"]) is None:
+        errors["item_date"] = "Enter a valid date."
+    try:
+        price = float(values["price"])
+        if price < 0:
+            errors["price"] = "Price cannot be negative."
+    except (TypeError, ValueError):
+        errors["price"] = "Enter a price."
+    if values["supplier_id"]:
+        ids = {str(s["id"]) for s in suppliers}
+        if values["supplier_id"] not in ids:
+            errors["supplier_id"] = "Choose a supplier."
+    return errors
 
 
 def create_app(test_db=None):
@@ -97,13 +317,452 @@ def create_app(test_db=None):
         return render_template(
             "dashboard.html",
             user=g.user,
-            nav=NAV_ITEMS,
+            nav=build_nav(g.user["role"], "dashboard"),
             today=today,
             departures=departures,
             unpaid=unpaid,
             stats=stats,
             totals=totals,
         )
+
+    @app.route("/clients")
+    @require_page("clients")
+    def client_list():
+        db = get_db()
+        query = request.args.get("q", "").strip()
+        branch_param = request.args.get("branch", "")
+        branch_ids = visible_branch_ids(g.user)
+        clauses = []
+        params = []
+        active_branch = ""
+        if branch_ids is None:
+            if branch_param.isdigit():
+                clauses.append("c.branch_id = ?")
+                params.append(int(branch_param))
+                active_branch = branch_param
+        else:
+            extra, branch_params = branch_filter(branch_ids, column="c.branch_id")
+            clauses.append("1 = 1" + extra)
+            params.extend(branch_params)
+        if query:
+            clauses.append("(c.full_name LIKE ? OR c.email LIKE ? OR c.phone LIKE ?)")
+            params.extend(["%" + query + "%"] * 3)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = db.execute(
+            "SELECT c.*, b.name AS branch_name,"
+            " (SELECT COUNT(*) FROM trips t WHERE t.client_id = c.id) AS trip_count"
+            " FROM clients c JOIN branches b ON b.id = c.branch_id "
+            + where
+            + " ORDER BY c.full_name",
+            params,
+        ).fetchall()
+        clients = []
+        for row in rows:
+            item = dict(row)
+            item["passport"] = passport_info(row["passport_expiry"])
+            clients.append(item)
+        return render_template(
+            "clients/list.html",
+            user=g.user,
+            nav=build_nav(g.user["role"], "clients"),
+            clients=clients,
+            q=query,
+            branches=g.branches,
+            active_branch=active_branch,
+            can_filter=g.user["role"] == ROLE_OWNER,
+        )
+
+    @app.route("/clients/new", methods=["GET", "POST"])
+    @require_page("clients")
+    def client_new():
+        db = get_db()
+        values = blank_client_values(g.user)
+        errors = {}
+        if request.method == "POST":
+            values, errors = read_client_form(request.form, db, g.user)
+            if not errors:
+                cur = db.execute(
+                    "INSERT INTO clients (full_name, email, phone, address,"
+                    " passport_number, passport_expiry, branch_id, agent_id)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        values["full_name"],
+                        values["email"],
+                        values["phone"],
+                        values["address"],
+                        values["passport_number"] or None,
+                        values["passport_expiry"] or None,
+                        values["branch_id"],
+                        g.user["id"],
+                    ),
+                )
+                db.commit()
+                return redirect(url_for("client_detail", client_id=cur.lastrowid))
+        return render_template(
+            "clients/form.html",
+            user=g.user,
+            nav=build_nav(g.user["role"], "clients"),
+            values=values,
+            errors=errors,
+            branches=g.branches,
+            can_pick_branch=g.user["role"] == ROLE_OWNER,
+            heading="New client",
+            action=url_for("client_new"),
+        )
+
+    @app.route("/clients/<int:client_id>")
+    @require_page("clients")
+    def client_detail(client_id):
+        db = get_db()
+        client = scoped_client(db, g.user, client_id)
+        if client is None:
+            abort(404)
+        trips = db.execute(
+            "SELECT t.*, b.name AS branch_name, u.name AS agent_name FROM trips t"
+            " JOIN branches b ON b.id = t.branch_id"
+            " LEFT JOIN users u ON u.id = t.agent_id"
+            " WHERE t.client_id = ? ORDER BY t.departure_date",
+            (client_id,),
+        ).fetchall()
+        history = []
+        for row in trips:
+            item = dict(row)
+            item.update(trip_money(db, row["id"], row["total_price"]))
+            history.append(item)
+        profile = dict(client)
+        profile["passport"] = passport_info(client["passport_expiry"])
+        return render_template(
+            "clients/detail.html",
+            user=g.user,
+            nav=build_nav(g.user["role"], "clients"),
+            client=profile,
+            trips=history,
+        )
+
+    @app.route("/clients/<int:client_id>/edit", methods=["GET", "POST"])
+    @require_page("clients")
+    def client_edit(client_id):
+        db = get_db()
+        client = scoped_client(db, g.user, client_id)
+        if client is None:
+            abort(404)
+        values = {
+            "full_name": client["full_name"],
+            "email": client["email"],
+            "phone": client["phone"],
+            "address": client["address"],
+            "passport_number": client["passport_number"] or "",
+            "passport_expiry": client["passport_expiry"] or "",
+            "branch_id": str(client["branch_id"]),
+        }
+        errors = {}
+        if request.method == "POST":
+            values, errors = read_client_form(request.form, db, g.user)
+            if not errors:
+                db.execute(
+                    "UPDATE clients SET full_name = ?, email = ?, phone = ?, address = ?,"
+                    " passport_number = ?, passport_expiry = ?, branch_id = ? WHERE id = ?",
+                    (
+                        values["full_name"],
+                        values["email"],
+                        values["phone"],
+                        values["address"],
+                        values["passport_number"] or None,
+                        values["passport_expiry"] or None,
+                        values["branch_id"],
+                        client_id,
+                    ),
+                )
+                db.commit()
+                return redirect(url_for("client_detail", client_id=client_id))
+        return render_template(
+            "clients/form.html",
+            user=g.user,
+            nav=build_nav(g.user["role"], "clients"),
+            values=values,
+            errors=errors,
+            branches=g.branches,
+            can_pick_branch=g.user["role"] == ROLE_OWNER,
+            heading="Edit client",
+            action=url_for("client_edit", client_id=client_id),
+        )
+
+    @app.route("/trips")
+    @require_page("trips")
+    def trip_list():
+        db = get_db()
+        query = request.args.get("q", "").strip()
+        status = request.args.get("status", "")
+        branch_param = request.args.get("branch", "")
+        branch_ids = visible_branch_ids(g.user)
+        clauses = []
+        params = []
+        active_branch = ""
+        if branch_ids is None:
+            if branch_param.isdigit():
+                clauses.append("t.branch_id = ?")
+                params.append(int(branch_param))
+                active_branch = branch_param
+        else:
+            extra, branch_params = branch_filter(branch_ids)
+            clauses.append("1 = 1" + extra)
+            params.extend(branch_params)
+        if status in TRIP_STATUSES:
+            clauses.append("t.status = ?")
+            params.append(status)
+        if query:
+            clauses.append("(t.title LIKE ? OR c.full_name LIKE ?)")
+            params.extend(["%" + query + "%"] * 2)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = db.execute(
+            "SELECT t.*, c.full_name AS client_name, b.name AS branch_name,"
+            " u.name AS agent_name FROM trips t"
+            " JOIN clients c ON c.id = t.client_id"
+            " JOIN branches b ON b.id = t.branch_id"
+            " LEFT JOIN users u ON u.id = t.agent_id " + where + " ORDER BY t.departure_date",
+            params,
+        ).fetchall()
+        trips = []
+        for row in rows:
+            item = dict(row)
+            item.update(trip_money(db, row["id"], row["total_price"]))
+            trips.append(item)
+        return render_template(
+            "trips/list.html",
+            user=g.user,
+            nav=build_nav(g.user["role"], "trips"),
+            trips=trips,
+            q=query,
+            status=status,
+            statuses=TRIP_STATUSES,
+            branches=g.branches,
+            active_branch=active_branch,
+            can_filter=g.user["role"] == ROLE_OWNER,
+        )
+
+    @app.route("/trips/new", methods=["GET", "POST"])
+    @require_page("trips")
+    def trip_new():
+        db = get_db()
+        branch_ids = visible_branch_ids(g.user)
+        clients = scoped_trip_clients(db, branch_ids)
+        staff = scoped_trip_staff(db, branch_ids)
+        preset_client = request.args.get("client_id", "")
+        values = {
+            "title": "",
+            "client_id": preset_client,
+            "branch_id": str(branch_ids[0]) if branch_ids else "",
+            "agent_id": str(g.user["id"]),
+            "departure_date": date.today().isoformat(),
+            "return_date": date.today().isoformat(),
+        }
+        errors = {}
+        if request.method == "POST":
+            values = {
+                "title": request.form.get("title", "").strip(),
+                "client_id": request.form.get("client_id", ""),
+                "branch_id": request.form.get("branch_id", ""),
+                "agent_id": request.form.get("agent_id", ""),
+                "departure_date": request.form.get("departure_date", "").strip(),
+                "return_date": request.form.get("return_date", "").strip(),
+            }
+            errors = validate_trip_form(values, clients, staff, g.user, branch_ids)
+            if not errors:
+                cur = db.execute(
+                    "INSERT INTO trips (client_id, branch_id, agent_id, title,"
+                    " departure_date, return_date, total_price, status)"
+                    " VALUES (?, ?, ?, ?, ?, ?, 0, 'pending')",
+                    (
+                        int(values["client_id"]),
+                        int(values["branch_id"]),
+                        int(values["agent_id"]),
+                        values["title"],
+                        values["departure_date"],
+                        values["return_date"],
+                    ),
+                )
+                db.commit()
+                return redirect(url_for("trip_detail", trip_id=cur.lastrowid))
+        return render_template(
+            "trips/form.html",
+            user=g.user,
+            nav=build_nav(g.user["role"], "trips"),
+            values=values,
+            errors=errors,
+            clients=clients,
+            staff=staff,
+            branches=g.branches,
+            can_pick_branch=g.user["role"] == ROLE_OWNER,
+            can_pick_agent=g.user["role"] in (ROLE_OWNER, ROLE_MANAGER),
+        )
+
+    @app.route("/trips/<int:trip_id>")
+    @require_page("trips")
+    def trip_detail(trip_id):
+        db = get_db()
+        trip = scoped_trip(db, g.user, trip_id)
+        if trip is None:
+            abort(404)
+        items = db.execute(
+            "SELECT i.*, s.name AS supplier_name, s.kind AS supplier_kind,"
+            " s.phone AS supplier_phone FROM itinerary_items i"
+            " LEFT JOIN suppliers s ON s.id = i.supplier_id"
+            " WHERE i.trip_id = ? ORDER BY i.item_date",
+            (trip_id,),
+        ).fetchall()
+        suppliers = db.execute("SELECT * FROM suppliers ORDER BY name").fetchall()
+        record = dict(trip)
+        record.update(trip_money(db, trip["id"], trip["total_price"]))
+        record["items_total"] = round(sum(i["price"] or 0 for i in items), 2)
+        record["passport"] = passport_info(trip["passport_expiry"])
+        return render_template(
+            "trips/detail.html",
+            user=g.user,
+            nav=build_nav(g.user["role"], "trips"),
+            trip=record,
+            items=items,
+            suppliers=suppliers,
+            statuses=TRIP_STATUSES,
+            kinds=ITEM_KINDS,
+            can_change_status=g.user["role"] in (ROLE_OWNER, ROLE_MANAGER),
+        )
+
+    @app.route("/trips/<int:trip_id>/edit", methods=["POST"])
+    @require_page("trips")
+    def trip_edit(trip_id):
+        db = get_db()
+        trip = scoped_trip(db, g.user, trip_id)
+        if trip is None:
+            abort(404)
+        title = request.form.get("title", "").strip()
+        departure = request.form.get("departure_date", "").strip()
+        return_day = request.form.get("return_date", "").strip()
+        errors = validate_trip_dates(departure, return_day)
+        if not title:
+            errors["title"] = "Enter a trip title."
+        if errors:
+            items = db.execute(
+                "SELECT i.*, s.name AS supplier_name, s.kind AS supplier_kind,"
+                " s.phone AS supplier_phone FROM itinerary_items i"
+                " LEFT JOIN suppliers s ON s.id = i.supplier_id"
+                " WHERE i.trip_id = ? ORDER BY i.item_date",
+                (trip_id,),
+            ).fetchall()
+            suppliers = db.execute("SELECT * FROM suppliers ORDER BY name").fetchall()
+            record = dict(trip)
+            record.update(trip_money(db, trip["id"], trip["total_price"]))
+            record["items_total"] = round(sum(i["price"] or 0 for i in items), 2)
+            record["passport"] = passport_info(trip["passport_expiry"])
+            return (
+                render_template(
+                    "trips/detail.html",
+                    user=g.user,
+                    nav=build_nav(g.user["role"], "trips"),
+                    trip=record,
+                    items=items,
+                    suppliers=suppliers,
+                    statuses=TRIP_STATUSES,
+                    kinds=ITEM_KINDS,
+                    can_change_status=g.user["role"] in (ROLE_OWNER, ROLE_MANAGER),
+                    edit_errors=errors,
+                    edit_values={"title": title or trip["title"], "departure_date": departure, "return_date": return_day},
+                ),
+                200,
+            )
+        db.execute(
+            "UPDATE trips SET title = ?, departure_date = ?, return_date = ? WHERE id = ?",
+            (title, departure, return_day, trip_id),
+        )
+        db.commit()
+        return redirect(url_for("trip_detail", trip_id=trip_id))
+
+    @app.route("/trips/<int:trip_id>/status", methods=["POST"])
+    @require_page("trips")
+    def trip_status(trip_id):
+        if g.user["role"] not in (ROLE_OWNER, ROLE_MANAGER):
+            return render_template("denied.html"), 403
+        db = get_db()
+        trip = scoped_trip(db, g.user, trip_id)
+        if trip is None:
+            abort(404)
+        status = request.form.get("status", "")
+        if status not in TRIP_STATUSES:
+            return redirect(url_for("trip_detail", trip_id=trip_id))
+        db.execute("UPDATE trips SET status = ? WHERE id = ?", (status, trip_id))
+        log_action(db, g.user["id"], "status:" + status, "trip", trip_id)
+        return redirect(url_for("trip_detail", trip_id=trip_id))
+
+    @app.route("/trips/<int:trip_id>/items", methods=["POST"])
+    @require_page("trips")
+    def trip_item_add(trip_id):
+        db = get_db()
+        trip = scoped_trip(db, g.user, trip_id)
+        if trip is None:
+            abort(404)
+        values = {
+            "kind": request.form.get("kind", ""),
+            "title": request.form.get("title", "").strip(),
+            "item_date": request.form.get("item_date", "").strip(),
+            "price": request.form.get("price", "").strip(),
+            "supplier_id": request.form.get("supplier_id", ""),
+            "voucher": request.form.get("voucher", "").strip(),
+        }
+        suppliers = db.execute("SELECT * FROM suppliers ORDER BY name").fetchall()
+        errors = validate_item_form(values, suppliers)
+        if errors:
+            items = db.execute(
+                "SELECT i.*, s.name AS supplier_name, s.kind AS supplier_kind,"
+                " s.phone AS supplier_phone FROM itinerary_items i"
+                " LEFT JOIN suppliers s ON s.id = i.supplier_id"
+                " WHERE i.trip_id = ? ORDER BY i.item_date",
+                (trip_id,),
+            ).fetchall()
+            record = dict(trip)
+            record.update(trip_money(db, trip["id"], trip["total_price"]))
+            record["items_total"] = round(sum(i["price"] or 0 for i in items), 2)
+            record["passport"] = passport_info(trip["passport_expiry"])
+            return (
+                render_template(
+                    "trips/detail.html",
+                    user=g.user,
+                    nav=build_nav(g.user["role"], "trips"),
+                    trip=record,
+                    items=items,
+                    suppliers=suppliers,
+                    statuses=TRIP_STATUSES,
+                    kinds=ITEM_KINDS,
+                    can_change_status=g.user["role"] in (ROLE_OWNER, ROLE_MANAGER),
+                    item_errors=errors,
+                    item_values=values,
+                ),
+                200,
+            )
+        db.execute(
+            "INSERT INTO itinerary_items (trip_id, kind, title, item_date, price, supplier_id, voucher)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                trip_id,
+                values["kind"],
+                values["title"],
+                values["item_date"],
+                float(values["price"]),
+                int(values["supplier_id"]) if values["supplier_id"] else None,
+                values["voucher"] or None,
+            ),
+        )
+        db.commit()
+        return redirect(url_for("trip_detail", trip_id=trip_id))
+
+    @app.route("/trips/<int:trip_id>/items/<int:item_id>/delete", methods=["POST"])
+    @require_page("trips")
+    def trip_item_delete(trip_id, item_id):
+        db = get_db()
+        trip = scoped_trip(db, g.user, trip_id)
+        if trip is None:
+            abort(404)
+        db.execute("DELETE FROM itinerary_items WHERE id = ? AND trip_id = ?", (item_id, trip_id))
+        db.commit()
+        return redirect(url_for("trip_detail", trip_id=trip_id))
 
     @app.route("/health")
     def health():
